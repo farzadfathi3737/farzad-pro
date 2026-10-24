@@ -1,7 +1,7 @@
 {
   "name": "v2gate",
   "version": "1.0.0",
-  "description": "Single-port V2Ray/Xray proxy panel for Node.js hosts — generates VLESS/VMess/Trojan configs and a subscription link",
+  "description": "Single-port native VLESS/Trojan proxy server + config panel for Node.js hosts (no Xray, no dependencies)",
   "main": "src/index.js",
   "type": "commonjs",
   "engines": {

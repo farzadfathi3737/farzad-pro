@@ -1,6 +1,6 @@
 'use strict';
 // Loads environment variables (+ optional .env file) and the persisted state
-// (UUID, trojan password, panel password hash, subscription token, TLS cert).
+// (UUID, trojan password, panel password hash, subscription token, clean IPs).
 
 const fs = require('fs');
 const path = require('path');
@@ -55,45 +55,42 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const settings = {
   root: ROOT,
   dataDir: DATA_DIR,
-  binDir: path.resolve(ROOT, env('BIN_DIR', 'bin')),
 
   // The single public port the host gives us.
   port: Number(env('PORT', env('SERVER_PORT', 3000))),
 
-  // Public hostname/IP clients should connect to. Auto-detected on PaaS,
-  // otherwise resolved from the public IP at startup if not set.
+  // Public hostname clients should connect to (also the TLS SNI / Host header).
+  // Auto-detected on PaaS, otherwise resolved from the public IP at startup.
   host: env('HOST', platformHost || ''),
   // Public port clients connect to (443 on PaaS, otherwise the same as `port`).
   publicPort: Number(env('PUBLIC_PORT', onPaaS ? 443 : env('PORT', env('SERVER_PORT', 3000)))),
 
   // TLS mode:
-  //   proxy → host terminates TLS (Render/Railway/Koyeb/Cloudflare). We serve plain HTTP.
-  //   self  → we serve HTTPS with a self-signed cert (VPS / Pterodactyl with a raw port).
+  //   proxy → host/Cloudflare terminates TLS. We serve plain HTTP.
+  //   self  → we serve HTTPS with a self-signed cert (VPS / raw port).
   //   off   → plain HTTP, configs without TLS.
   tlsMode: env('TLS_MODE', onPaaS ? 'proxy' : 'off'),
 
-  // Panel path and subscription path prefix.
   panelPath: '/' + env('PANEL_PATH', 'panel').replace(/^\/+|\/+$/g, ''),
   subPath: '/' + env('SUB_PATH', 'sub').replace(/^\/+|\/+$/g, ''),
 
-  // Which protocols to enable.
   enable: {
     vlessWs: bool('ENABLE_VLESS_WS', true),
-    vmessWs: bool('ENABLE_VMESS_WS', true),
     trojanWs: bool('ENABLE_TROJAN_WS', true),
-    vlessHttpUpgrade: bool('ENABLE_VLESS_HTTPUPGRADE', true),
+    vlessHu: bool('ENABLE_VLESS_HTTPUPGRADE', true),
+    trojanHu: bool('ENABLE_TROJAN_HTTPUPGRADE', false),
   },
 
-  // Name prefix for configs as shown in the client app.
   configName: env('CONFIG_NAME', 'V2Gate'),
 
-  // Xray
-  xrayVersion: env('XRAY_VERSION', 'latest'),
-  xrayBasePort: Number(env('XRAY_BASE_PORT', 10100)),
-  xrayLogLevel: env('XRAY_LOG_LEVEL', 'warning'),
-
-  // Block private/LAN destinations through the proxy (recommended).
+  // Proxy engine
+  dnsResolver: env('DNS_RESOLVER', '8.8.8.8'),
+  dnsResolverPort: Number(env('DNS_RESOLVER_PORT', 53)),
+  idleTimeout: Number(env('IDLE_TIMEOUT', 300)) * 1000,
   blockPrivate: bool('BLOCK_PRIVATE', true),
+
+  // Comma-separated clean IPs/hosts to seed the list (editable in the panel).
+  cleanIpsEnv: env('CLEAN_IPS', ''),
 
   onPaaS,
 };
@@ -135,6 +132,15 @@ function randomToken(bytes = 16) {
   return crypto.randomBytes(bytes).toString('base64url');
 }
 
+function parseCleanIps(text) {
+  return [...new Set(
+    String(text || '')
+      .split(/[\s,;]+/)
+      .map((s) => s.trim())
+      .filter((s) => s && /^[A-Za-z0-9.:\-\[\]]+$/.test(s))
+  )].slice(0, 50);
+}
+
 function ensureState() {
   const state = readState();
   let changed = false;
@@ -173,16 +179,22 @@ function ensureState() {
   }
 
   const panelPassword = env('PANEL_PASSWORD');
-  if (panelPassword) {
-    // Re-hash only if the env password changed.
-    if (!verifyPassword(panelPassword, state.panelPasswordHash)) {
-      state.panelPasswordHash = hashPassword(panelPassword);
-      changed = true;
-    }
+  if (panelPassword && !verifyPassword(panelPassword, state.panelPasswordHash)) {
+    state.panelPasswordHash = hashPassword(panelPassword);
+    changed = true;
   }
 
   if (!state.sessionSecret) {
     state.sessionSecret = randomToken(32);
+    changed = true;
+  }
+
+  if (!Array.isArray(state.cleanIps)) {
+    state.cleanIps = parseCleanIps(settings.cleanIpsEnv);
+    changed = true;
+  } else if (settings.cleanIpsEnv && !state.cleanIpsSeededFromEnv) {
+    state.cleanIps = [...new Set([...state.cleanIps, ...parseCleanIps(settings.cleanIpsEnv)])];
+    state.cleanIpsSeededFromEnv = true;
     changed = true;
   }
 
@@ -198,15 +210,26 @@ function updateState(patch) {
   return state;
 }
 
-// Websocket paths — derived from the UUID so they are not guessable by scanners.
+// Transport paths — derived from the UUID so they are not guessable by scanners.
 function paths() {
   const tag = state.uuid.replace(/-/g, '').slice(0, 8);
   return {
     vlessWs: env('PATH_VLESS_WS', `/vless-${tag}`),
-    vmessWs: env('PATH_VMESS_WS', `/vmess-${tag}`),
     trojanWs: env('PATH_TROJAN_WS', `/trojan-${tag}`),
-    vlessHttpUpgrade: env('PATH_VLESS_HU', `/hu-${tag}`),
+    vlessHu: env('PATH_VLESS_HU', `/hu-${tag}`),
+    trojanHu: env('PATH_TROJAN_HU', `/thu-${tag}`),
   };
+}
+
+// Map of URL path → { protocol, transport }
+function routes() {
+  const p = paths();
+  const map = new Map();
+  if (settings.enable.vlessWs) map.set(p.vlessWs, { protocol: 'vless', transport: 'ws' });
+  if (settings.enable.trojanWs) map.set(p.trojanWs, { protocol: 'trojan', transport: 'ws' });
+  if (settings.enable.vlessHu) map.set(p.vlessHu, { protocol: 'vless', transport: 'httpupgrade' });
+  if (settings.enable.trojanHu) map.set(p.trojanHu, { protocol: 'trojan', transport: 'httpupgrade' });
+  return map;
 }
 
 module.exports = {
@@ -214,6 +237,8 @@ module.exports = {
   state,
   updateState,
   paths,
+  routes,
+  parseCleanIps,
   sha256,
   hashPassword,
   verifyPassword,

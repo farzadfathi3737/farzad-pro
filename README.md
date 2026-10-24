@@ -1,85 +1,89 @@
 <div dir="rtl">
 
-# V2Gate — پنل تک‌پورتی V2Ray/Xray برای هاست‌های Node.js
+# V2Gate — سرور تک‌پورتی VLESS/Trojan با موتور بومی Node.js
 
-یک اپ کوچک Node.js که روی **یک پورت** بالا می‌آید، هسته‌ی [Xray-core](https://github.com/XTLS/Xray-core) را خودش دانلود و اجرا می‌کند، و کانفیگ‌های **VLESS / VMess / Trojan** (WebSocket و HTTPUpgrade) به‌علاوه‌ی یک **لینک سابسکریپشن** تحویل می‌دهد. مناسب هاست‌هایی مثل Render، Railway، Koyeb، هاست‌های رایگان Node.js (Pterodactyl) و همین‌طور VPS با Docker.
+یک اپ کوچک Node.js که روی **یک پورت** بالا می‌آید و **خودش** پروتکل‌های **VLESS** و **Trojan** را (روی WebSocket و HTTPUpgrade) اجرا می‌کند — بدون Xray، بدون باینری خارجی، بدون هیچ وابستگی npm. کانفیگ‌ها و لینک سابسکریپشن را از پنل می‌گیرید و با v2rayNG / Hiddify / v2rayN / Streisand / NekoBox / Clash استفاده می‌کنید.
 
-- **بدون هیچ وابستگی npm** — فقط `node src/index.js`
-- پنل مدیریت با رمز عبور، QR برای هر کانفیگ، لینک سابسکریپشن (base64 / خام / Clash)
-- مسیرهای WebSocket غیرقابل حدس (از روی UUID ساخته می‌شوند)
-- صفحه‌ی اصلی یک صفحه‌ی ساده و بی‌خطر نشان می‌دهد؛ پنل روی مسیر جداست
-- تشخیص خودکار هاست‌های PaaS (دامنه و TLS)
-- ری‌استارت خودکار Xray در صورت کرش
+- **کاملاً بومی**: WebSocket (RFC 6455)، VLESS، Trojan، رله‌ی TCP و DNS همه در خود Node
+- **IP تمیز**: لیست IPهای تمیز کلودفلر را در پنل بدهید؛ برای هر IP، کانفیگ جدا ساخته و به سابسکریپشن اضافه می‌شود
+- **تست داخلی**: یک دکمه در پنل که از خود سرور یک اتصال VLESS به اینترنت می‌زند تا مشخص شود مشکل از سرور است یا مسیر شبکه
+- پنل فارسی با رمز، QR برای هر کانفیگ، سابسکریپشن base64 / خام / Clash
+- مسیرهای WebSocket غیرقابل حدس، صفحه‌ی اصلی پوششی، قفل ورود بعد از ۵ تلاش ناموفق
+- Dockerfile، Blueprint برای Render، docker-compose برای VPS، Worker برای کلودفلر
 
 ## چطور کار می‌کند؟
 
 ```text
  کلاینت (v2rayNG, Hiddify, …)
-        │  TLS (توسط هاست)  یا  مستقیم
-        ▼
- ┌──────────────────────────┐    127.0.0.1:1010x    ┌───────────┐
- │  V2Gate  (Node, پورت $PORT)│ ───────────────────▶ │ Xray-core │ ──▶ اینترنت
- │  /panel  /sub/<token>    │   هر پروتکل یک پورت   └───────────┘
- └──────────────────────────┘
+   │  TLS  →  به دامنه‌ی سرویس، یا به یک IP تمیز کلودفلر با SNI دامنه
+   ▼
+ Cloudflare (اختیاری: دامنه‌ی proxied یا Worker)
+   ▼
+ ┌─────────────────────────────────────────────┐
+ │ V2Gate (Node, پورت $PORT)                   │
+ │  /panel  /sub/<token>  /<مسیرهای WS>       │
+ │  ws.js → proxy.js (VLESS | Trojan) → TCP   │ ──▶ اینترنت
+ └─────────────────────────────────────────────┘
 ```
-
-Node فقط نقش reverse-proxy برای درخواست‌های Upgrade دارد و کار اصلی پروکسی را Xray انجام می‌دهد.
 
 ---
 
-## ۱) دیپلوی از GitHub روی Render (پیشنهادی — رایگان)
+## ۱) دیپلوی از GitHub روی Render (رایگان)
 
-1. این ریپو را Fork کنید (یا کد را در یک ریپوی جدید خودتان push کنید).
-2. در [render.com](https://render.com) → **New → Web Service** → ریپو را انتخاب کنید.
-3. Render فایل `Dockerfile` را خودش تشخیص می‌دهد. Plan را **Free** بگذارید.
-4. در بخش **Environment** این متغیرها را اضافه کنید (مقدارها دلخواه):
+1. این ریپو را Fork کنید یا کد را در ریپوی خودتان push کنید.
+2. [render.com](https://render.com) → **New → Web Service** → ریپو را انتخاب کنید. Render فایل `Dockerfile` را تشخیص می‌دهد. Plan: **Free**.
+3. **Environment** → این متغیرها را بدهید:
 
    | متغیر | مقدار |
    |---|---|
    | `PANEL_PASSWORD` | رمز پنل |
-   | `UUID` | یک UUID (از [uuidgenerator.net](https://www.uuidgenerator.net/)) |
+   | `UUID` | یک UUID ([uuidgenerator.net](https://www.uuidgenerator.net/)) |
    | `TROJAN_PASSWORD` | یک رمز تصادفی |
-   | `SUB_TOKEN` | یک رشته‌ی تصادفی (بدون فاصله) |
+   | `SUB_TOKEN` | یک رشته‌ی تصادفی بدون فاصله |
 
-   > چون دیسک رایگان Render پایدار نیست، این مقادیر را حتماً ست کنید تا با هر دیپلوی عوض نشوند.
-   > اگر از **Blueprint** استفاده کنید (New → Blueprint)، فایل `render.yaml` همه را خودکار می‌سازد و فقط `PANEL_PASSWORD` را خودتان می‌دهید.
+   > دیسک رایگان Render پایدار نیست؛ بدون این‌ها با هر دیپلوی UUID عوض می‌شود. با **New → Blueprint** فایل `render.yaml` همه را خودکار می‌سازد و فقط `PANEL_PASSWORD` را می‌دهید.
 
-5. **Create Web Service** → چند دقیقه صبر کنید تا بیلد تمام شود.
-6. به `https://<نام-اپ>.onrender.com/panel` بروید، وارد شوید و لینک سابسکریپشن را کپی کنید.
+4. **Create Web Service** → بعد از بیلد، `https://<app>.onrender.com/panel` را باز کنید.
+5. اول دکمه‌ی **«تست داخلی پروکسی»** را بزنید. اگر «موفق» بود، سرور سالم است.
+6. لینک سابسکریپشن را در کلاینت اضافه کنید و با **Real delay / URL test** تست بگیرید (نه TCP ping).
 
-هر `git push` به شاخه‌ی `main`، دیپلوی جدید می‌سازد.
+هر `git push` به `main` دیپلوی جدید می‌سازد. پلن رایگان بعد از ۱۵ دقیقه بی‌استفاده بودن خواب می‌رود و اولین اتصال بعدی ۳۰–۵۰ ثانیه طول می‌کشد.
 
-> نکته: پلن رایگان Render بعد از ۱۵ دقیقه بی‌استفاده بودن، سرویس را خواب می‌کند و اولین اتصال بعدی ۳۰–۵۰ ثانیه طول می‌کشد.
+## ۲) اگر کانفیگ وصل نشد ولی تست داخلی موفق بود → IP تمیز
 
-## ۲) Railway / Koyeb / Fly.io
+یعنی مسیر شما تا سرور (دامنه/IP هاست) از سمت ISP بسته یا کند است. راه‌حل: سرویس را پشت **Cloudflare** ببرید و با IP تمیز وصل شوید.
 
-همین روند: ریپو را وصل کنید، Dockerfile تشخیص داده می‌شود، همان متغیرهای بالا را ست کنید. دامنه و TLS خودکار تشخیص داده می‌شود (`TLS_MODE=proxy`، پورت عمومی `443`).
+**روش A — Cloudflare Worker (بدون دامنه‌ی شخصی):**
 
-## ۳) VPS با Docker
+1. در [dash.cloudflare.com](https://dash.cloudflare.com) → **Workers & Pages → Create → Create Worker** → کد `cloudflare-worker.js` را جای‌گزین کنید و Deploy بزنید.
+2. در تنظیمات Worker → **Variables** → `ORIGIN` = `your-app.onrender.com` (فقط هاست).
+3. روی سرور V2Gate متغیر `HOST` را برابر دامنه‌ی Worker بگذارید (مثل `my-worker.me.workers.dev`) و ری‌دیپلوی کنید.
+4. در پنل، بخش **IP تمیز**، چند IP تمیز کلودفلر (که در ISP شما جواب می‌دهد) وارد کنید و ذخیره بزنید.
+5. سابسکریپشن را در کلاینت آپدیت کنید — برای هر IP تمیز، کانفیگ جدا دارید.
+
+**روش B — دامنه‌ی شخصی روی Cloudflare:** یک رکورد CNAME (با ابر نارنجی/Proxied) به دامنه‌ی هاست بزنید، `HOST` را برابر دامنه‌ی خودتان بگذارید و همان مراحل ۴ و ۵.
+
+> IP تمیز چیست؟ آدرس‌های لبه‌ی کلودفلر (مثل محدوده‌های `162.159.x.x` یا `188.114.x.x`) که در ISP شما بدون اختلال کار می‌کنند. کلاینت به آن IP وصل می‌شود ولی SNI و Host همان دامنه می‌ماند، پس کلودفلر درخواست را به سرویس شما می‌رساند. ابزارهای «CF IP scanner» برای پیدا کردن‌شان زیاد است.
+
+## ۳) Railway / Koyeb / Fly.io
+
+ریپو را وصل کنید، Dockerfile تشخیص داده می‌شود، همان متغیرها را ست کنید. دامنه و TLS خودکار تشخیص داده می‌شود (`TLS_MODE=proxy`، پورت عمومی `443`).
+
+## ۴) VPS با Docker
 
 ```bash
 git clone https://github.com/<شما>/<ریپو>.git && cd <ریپو>
-cp .env.example .env     # اختیاری — ویرایش کنید
+cp .env.example .env     # اختیاری
 docker compose up -d --build
 ```
 
-`docker-compose.yml` پورت `443` را به اپ می‌دهد و `TLS_MODE=self` (گواهی خودامضا) فعال است. اگر پشت Cloudflare یا nginx هستید، `TLS_MODE=proxy` بگذارید.
+`docker-compose.yml` پورت `443` را به اپ می‌دهد و `TLS_MODE=self` (گواهی خودامضا) فعال است. اگر پشت Cloudflare/nginx هستید، `TLS_MODE=proxy` بگذارید.
 
-یا بدون بیلد، از ایمیجی که GitHub Actions می‌سازد:
+## ۵) هاست‌های Node.js (Pterodactyl و مشابه)
 
-```bash
-docker run -d --name v2gate --restart unless-stopped \
-  -p 443:3000 -e PUBLIC_PORT=443 -e TLS_MODE=self -e PANEL_PASSWORD=secret \
-  -v $PWD/data:/app/data ghcr.io/<شما>/<ریپو>:latest
-```
+`package.json` و پوشه‌ی `src/` را آپلود کنید؛ Startup: `node src/index.js` — پورت از `SERVER_PORT` خوانده می‌شود. هیچ چیزی دانلود نمی‌شود و `npm install` لازم نیست.
 
-## ۴) هاست‌های Node.js (Pterodactyl و مشابه)
-
-1. فایل‌های `package.json` و پوشه‌ی `src/` را آپلود کنید (یا از Git clone هاست استفاده کنید).
-2. Startup command: `node src/index.js` — پورت از `SERVER_PORT` خوانده می‌شود.
-3. بار اول Xray از GitHub دانلود می‌شود (چند ثانیه). اگر هاست TLS ندارد، کانفیگ‌ها بدون TLS ساخته می‌شوند؛ برای TLS خودامضا `TLS_MODE=self` بگذارید (به `openssl` نیاز دارد).
-
-## ۵) اجرای محلی
+## ۶) اجرای محلی
 
 ```bash
 node src/index.js
@@ -90,70 +94,75 @@ node src/index.js
 
 ## متغیرهای محیطی
 
-همه اختیاری‌اند. فایل `.env.example` را ببینید.
+همه اختیاری‌اند — `.env.example` را ببینید.
 
 | متغیر | پیش‌فرض | توضیح |
 |---|---|---|
 | `PORT` / `SERVER_PORT` | `3000` | پورتی که اپ روی آن گوش می‌دهد |
-| `HOST` | خودکار | دامنه/IP عمومی در کانفیگ‌ها |
+| `HOST` | خودکار | دامنه در کانفیگ‌ها (SNI/Host) |
 | `PUBLIC_PORT` | `443` روی PaaS، وگرنه `PORT` | پورتی که کلاینت‌ها به آن وصل می‌شوند |
 | `TLS_MODE` | `proxy` روی PaaS، وگرنه `off` | `proxy` / `self` / `off` |
-| `PANEL_PASSWORD` | — | رمز پنل (در غیر این صورت بار اول از شما پرسیده می‌شود) |
-| `UUID` | تولید خودکار | شناسه‌ی VLESS/VMess |
+| `PANEL_PASSWORD` | — | رمز پنل (وگرنه بار اول پرسیده می‌شود) |
+| `UUID` | تولید خودکار | شناسه‌ی VLESS |
 | `TROJAN_PASSWORD` | تولید خودکار | رمز Trojan |
 | `SUB_TOKEN` | تولید خودکار | توکن لینک سابسکریپشن |
-| `PANEL_PATH` | `panel` | مسیر پنل |
-| `SUB_PATH` | `sub` | مسیر سابسکریپشن |
-| `CONFIG_NAME` | `V2Gate` | نام کانفیگ‌ها در کلاینت |
-| `ENABLE_VLESS_WS` `ENABLE_VMESS_WS` `ENABLE_TROJAN_WS` `ENABLE_VLESS_HTTPUPGRADE` | `true` | روشن/خاموش کردن هر پروتکل |
-| `PATH_VLESS_WS` … | از روی UUID | مسیرهای WebSocket |
-| `XRAY_VERSION` | `latest` | نسخه‌ی Xray |
+| `CLEAN_IPS` | — | IPهای تمیز اولیه، با کاما |
+| `PANEL_PATH` / `SUB_PATH` | `panel` / `sub` | مسیرها |
+| `CONFIG_NAME` | `V2Gate` | نام کانفیگ‌ها |
+| `ENABLE_VLESS_WS` `ENABLE_TROJAN_WS` `ENABLE_VLESS_HTTPUPGRADE` `ENABLE_TROJAN_HTTPUPGRADE` | `true/true/true/false` | روشن/خاموش کردن هر ترکیب |
+| `PATH_VLESS_WS` … | از روی UUID | مسیرهای WS |
+| `DNS_RESOLVER` | `8.8.8.8` | رزولور برای DNS کلاینت (UDP→TCP) |
+| `IDLE_TIMEOUT` | `300` | ثانیه؛ بستن اتصال بی‌کار |
 | `BLOCK_PRIVATE` | `true` | بستن دسترسی به شبکه‌ی داخلی سرور |
-| `DATA_DIR` | `data` | محل ذخیره‌ی state (UUID، رمزها، گواهی) |
+| `VERBOSE` | `false` | لاگ هر اتصال |
+| `DATA_DIR` | `data` | محل ذخیره‌ی state |
 
 ## مسیرها
 
 | مسیر | توضیح |
 |---|---|
 | `/` | صفحه‌ی ساده (پوشش) |
-| `/health` | وضعیت سرویس (JSON) — برای health check هاست |
+| `/health` | وضعیت سرویس (JSON) |
 | `/panel` | پنل مدیریت |
 | `/sub/<token>` | سابسکریپشن base64 |
 | `/sub/<token>?format=raw` | لینک‌ها به صورت متن |
 | `/sub/<token>?format=clash` | فایل Clash Meta |
 
-## استفاده در کلاینت
+## محدودیت‌های موتور بومی
 
-لینک سابسکریپشن را در **v2rayNG / v2rayN / Hiddify / Streisand / NekoBox / Clash Verge** به‌عنوان Subscription اضافه کنید و Update بزنید. برای تست اتصال از **Real delay / URL test** استفاده کنید نه TCP ping.
+- **UDP**: فقط DNS (پورت ۵۳) پشتیبانی می‌شود (به TCP تبدیل و به `DNS_RESOLVER` فرستاده می‌شود). بازی‌ها و تماس‌های صوتی که UDP خالص می‌خواهند کار نمی‌کنند؛ مرور وب، یوتیوب، تلگرام و اینستاگرام مشکلی ندارند.
+- **VMess و Shadowsocks** پیاده نشده‌اند؛ VLESS و Trojan کافی و سبک‌ترند.
+- **XTLS/Reality** نیاز به کنترل مستقیم TLS دارند و روی هاست‌های تک‌پورتی PaaS قابل اجرا نیستند.
 
 ## نکات امنیتی
 
 - لینک سابسکریپشن شامل توکن است؛ آن را عمومی نکنید.
-- پوشه‌ی `data/` حاوی UUID، رمزها و کلید TLS است — در `.gitignore` هست و نباید commit شود.
-- دکمه‌ی «ریست UUID و رمزها» در پنل همه‌ی کانفیگ‌ها و لینک سابسکریپشن را باطل می‌کند.
-- ورود به پنل بعد از ۵ تلاش ناموفق، ۱۰ دقیقه برای آن IP قفل می‌شود.
+- پوشه‌ی `data/` حاوی UUID، رمزها و کلید TLS است — در `.gitignore` هست.
+- «ریست UUID و رمزها» همه‌ی کانفیگ‌ها و لینک سابسکریپشن را باطل می‌کند.
 
 ## عیب‌یابی
 
-- **Xray بالا نمی‌آید / کانفیگ وصل نمی‌شود:** لاگ سرویس را ببینید. اگر دانلود Xray از GitHub شکست خورده، سرویس را ری‌استارت کنید یا از Dockerfile استفاده کنید (Xray در زمان بیلد دانلود می‌شود).
-- **روی PaaS بعد از هر دیپلوی کانفیگ‌ها عوض می‌شوند:** `UUID`، `TROJAN_PASSWORD`، `SUB_TOKEN` و `PANEL_PASSWORD` را به‌عنوان متغیر محیطی ست کنید.
-- **کلاینت خطای گواهی می‌دهد:** در حالت `self` لینک‌ها `allowInsecure=1` دارند؛ در کلاینت «Allow insecure» را روشن کنید.
-- **صفحه‌ی `/panel` ۴۰۴ می‌دهد:** `PANEL_PATH` را عوض کرده‌اید؛ همان مسیر را باز کنید.
+| علامت | معنی | کار |
+|---|---|---|
+| تست داخلی پنل **ناموفق** | سرور به اینترنت دسترسی ندارد یا هاست WebSocket را نمی‌بندد | لاگ سرویس را ببینید؛ هاست دیگری امتحان کنید |
+| تست داخلی **موفق** ولی کلاینت وصل نمی‌شود | دامنه/IP هاست از ISP شما بسته است | IP تمیز + Cloudflare (بخش ۲) |
+| کلاینت وصل می‌شود ولی بعد از چند دقیقه قطع می‌شود (Render) | سرویس رایگان خواب رفته | دوباره وصل شوید؛ یا هاستی بدون خواب |
+| v2rayNG پینگ TCP نمی‌دهد | TCP ping به هاست‌های پشت CDN اغلب جواب نمی‌دهد | از **Real delay** استفاده کنید |
+| کانفیگ‌ها بعد از هر دیپلوی عوض می‌شوند | دیسک پایدار نیست | `UUID`، `TROJAN_PASSWORD`، `SUB_TOKEN` را ست کنید |
+| خطای گواهی در کلاینت | حالت `self` | «Allow insecure» را روشن کنید (در لینک‌ها هست) |
 
 ## ساختار پروژه
 
 ```text
-src/index.js   سرور HTTP(S)، پنل، سابسکریپشن، reverse-proxy برای WebSocket
-src/xray.js    دانلود، تنظیم و مدیریت پروسه‌ی Xray
-src/config.js  متغیرهای محیطی و state ذخیره‌شده
-src/links.js   ساخت لینک‌های vless:// vmess:// trojan:// و خروجی Clash
-src/panel.js   HTML پنل
-src/qr.js      تولید QR (بدون وابستگی)
-src/zip.js     استخراج آرشیو Xray (بدون وابستگی)
-Dockerfile     ایمیج آماده با Xray داخلش
-render.yaml    Blueprint برای Render
-docker-compose.yml   اجرا روی VPS
-.github/workflows/docker.yml   بیلد و انتشار ایمیج در GHCR
+src/index.js     سرور HTTP(S)، پنل، سابسکریپشن، تست داخلی، مسیردهی Upgrade
+src/ws.js        WebSocket سرور/کلاینت (RFC 6455) و HTTPUpgrade — بدون وابستگی
+src/proxy.js     موتور VLESS و Trojan: parse هدر، رله‌ی TCP، DNS برای UDP
+src/config.js    متغیرهای محیطی و state ذخیره‌شده (UUID، رمزها، IPهای تمیز)
+src/links.js     ساخت لینک‌های vless:// trojan:// (+ نسخه‌ی هر IP تمیز) و خروجی Clash
+src/panel.js     HTML پنل
+src/qr.js        تولید QR — بدون وابستگی
+cloudflare-worker.js   Worker برای قرار دادن سرویس پشت کلودفلر
+Dockerfile · render.yaml · docker-compose.yml · .github/workflows/docker.yml
 ```
 
 ## مجوز
