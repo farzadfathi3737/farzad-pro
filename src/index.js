@@ -1,10 +1,11 @@
 'use strict';
-// V2Gate — single-port Xray proxy + config panel.
+// V2Gate — single-port VLESS/Trojan proxy server + config panel, pure Node.js.
 //
-//   ┌──────────────┐   HTTP(S) on $PORT   ┌────────────┐  127.0.0.1:1010x  ┌──────┐
-//   │ client/app   │ ───────────────────▶ │  this app  │ ────────────────▶ │ xray │ ──▶ internet
-//   └──────────────┘  WS upgrade / panel  └────────────┘  (per protocol)   └──────┘
-//
+//   ┌──────────────┐   HTTP(S) on $PORT    ┌───────────────────────────┐
+//   │ client/app   │ ────────────────────▶ │ this app                  │ ──▶ internet
+//   └──────────────┘  WS / HTTPUpgrade     │  ws.js → proxy.js (VLESS, │
+//                      panel, subscription │  Trojan) → net.connect    │
+//                                          └───────────────────────────┘
 // Everything a visitor sees on normal URLs is a plain placeholder page; the panel
 // lives under PANEL_PATH and the subscription under SUB_PATH/<token>.
 
@@ -16,14 +17,16 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const QR = require('./qr');
-
-const { settings, state, updateState, hashPassword, verifyPassword, randomToken } = require('./config');
-const xray = require('./xray');
+const ws = require('./ws');
+const proxy = require('./proxy');
+const { settings, state, updateState, routes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
 
 const startedAt = Date.now();
 const log = (...a) => console.log('[v2gate]', ...a);
+const verbose = process.env.VERBOSE === '1' || process.env.VERBOSE === 'true';
+const plog = verbose ? (...a) => console.log('[proxy]', ...a) : () => {};
 
 // ---- helpers -----------------------------------------------------------------
 function send(res, status, body, headers = {}) {
@@ -35,7 +38,7 @@ function send(res, status, body, headers = {}) {
 const redirect = (res, to) => send(res, 302, '', { Location: to });
 const notFound = (res) => send(res, 404, '<h1>404 Not Found</h1>');
 
-function readBody(req, limit = 10 * 1024) {
+function readBody(req, limit = 16 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -136,15 +139,90 @@ function noteFailure(ip) {
 
 // ---- QR cache -------------------------------------------------------------------
 const qrCache = new Map();
-async function qr(text) {
+function qr(text) {
   if (qrCache.has(text)) return qrCache.get(text);
   const url = QR.toDataUri(text, { level: 'M', scale: 4 });
-  if (qrCache.size > 200) qrCache.clear();
+  if (qrCache.size > 400) qrCache.clear();
   qrCache.set(text, url);
   return url;
 }
 
+// ---- self-test: act as a VLESS client against ourselves ------------------------------
+async function selfTest() {
+  const target = new URL(process.env.SELFTEST_URL || 'http://www.gstatic.com/generate_204');
+  const port = Number(target.port) || 80;
+  const p = paths();
+  const useVless = settings.enable.vlessWs;
+  if (!useVless && !settings.enable.trojanWs) return { ok: false, text: 'هیچ کانفیگ WebSocket فعالی برای تست وجود ندارد.' };
+  const started = Date.now();
+  let stream;
+  try {
+    stream = await ws.connectWebSocket({
+      host: '127.0.0.1',
+      port: settings.port,
+      path: useVless ? p.vlessWs : p.trojanWs,
+      secure: settings.tlsMode === 'self',
+      rejectUnauthorized: false,
+      servername: settings.host,
+      headers: { Host: settings.host },
+    });
+  } catch (e) {
+    return { ok: false, text: `اتصال WebSocket به خود سرور شکست خورد: ${e.message}` };
+  }
+  return new Promise((resolve) => {
+    const header = useVless ? proxy.buildVlessHeader(target.hostname, port) : proxy.buildTrojanHeader(target.hostname, port);
+    const httpReq = `GET ${target.pathname || '/'} HTTP/1.1\r\nHost: ${target.hostname}\r\nUser-Agent: v2gate-selftest\r\nConnection: close\r\n\r\n`;
+    stream.write(Buffer.concat([header, Buffer.from(httpReq)]));
+    let buf = Buffer.alloc(0);
+    const timer = setTimeout(() => { stream.destroy(); resolve({ ok: false, text: 'پاسخی از مقصد نرسید (timeout ۱۰ ثانیه). خروجی سرور به اینترنت را بررسی کنید.' }); }, 10000);
+    const finish = (r) => { clearTimeout(timer); stream.destroy(); resolve(r); };
+    stream.on('data', (d) => {
+      buf = Buffer.concat([buf, d]);
+      let body = buf;
+      if (useVless) {
+        if (buf.length < 2) return;
+        if (buf[0] !== 0) return finish({ ok: false, text: 'پاسخ VLESS نامعتبر بود.' });
+        body = buf.subarray(2 + buf[1]);
+      }
+      const m = /^HTTP\/1\.[01] (\d{3})/.exec(body.toString('latin1'));
+      if (m) {
+        const ms = Date.now() - started;
+        const ok = m[1][0] === '2' || m[1][0] === '3';
+        finish({ ok, text: ok
+          ? `موفق — ${useVless ? 'VLESS' : 'Trojan'} over WebSocket → ${target.hostname} پاسخ HTTP ${m[1]} داد (${ms}ms). موتور پروکسی سالم است.`
+          : `مقصد پاسخ HTTP ${m[1]} داد (${ms}ms).` });
+      }
+    });
+    stream.on('error', (e) => finish({ ok: false, text: `خطا: ${e.message}` }));
+    stream.on('close', () => { if (!buf.length) finish({ ok: false, text: 'اتصال بسته شد بدون پاسخ — احتمالاً سرور به مقصد دسترسی ندارد.' }); });
+  });
+}
+
 // ---- panel ------------------------------------------------------------------------
+function renderDashboard(req, res, notice) {
+  const configs = links.allConfigs();
+  const subUrl = links.subscriptionUrl(baseUrl(req));
+  const qrs = { __sub: qr(subUrl) };
+  for (const c of configs) qrs[c.key] = qr(c.link);
+  return send(
+    res,
+    200,
+    panel.dashboard({
+      panelPath: settings.panelPath,
+      host: settings.host,
+      publicPort: settings.publicPort,
+      tlsMode: settings.tlsMode,
+      stats: proxy.stats,
+      configs,
+      cleanIps: state.cleanIps || [],
+      subUrl,
+      uptime: uptimeString(),
+      qrs,
+      notice,
+    })
+  );
+}
+
 async function handlePanel(req, res, url) {
   const p = settings.panelPath;
   const sub = url.pathname.slice(p.length) || '/';
@@ -189,42 +267,27 @@ async function handlePanel(req, res, url) {
     if (sub === '/logout') {
       return send(res, 302, '', { Location: p, 'Set-Cookie': sessionCookie(req, '', 0) });
     }
-    if (sub === '/restart') {
-      await xray.restart();
-      return redirect(res, p);
-    }
     if (sub === '/rotate') {
       updateState({ uuid: crypto.randomUUID(), trojanPassword: randomToken(12), subToken: randomToken(16) });
       qrCache.clear();
-      await xray.restart();
       log('credentials rotated');
       return redirect(res, p);
+    }
+    if (sub === '/cleanips') {
+      const form = parseForm(await readBody(req));
+      updateState({ cleanIps: parseCleanIps(form.ips) });
+      log(`clean IPs updated (${state.cleanIps.length})`);
+      return redirect(res, p);
+    }
+    if (sub === '/selftest') {
+      const r = await selfTest();
+      log('self-test:', r.ok ? 'OK' : 'FAIL', '-', r.text);
+      return renderDashboard(req, res, r);
     }
     return notFound(res);
   }
 
-  if (sub === '/' || sub === '') {
-    const configs = links.allConfigs();
-    const subUrl = links.subscriptionUrl(baseUrl(req));
-    const qrs = { __sub: await qr(subUrl) };
-    for (const c of configs) qrs[c.key] = await qr(c.link);
-    return send(
-      res,
-      200,
-      panel.dashboard({
-        panelPath: p,
-        host: settings.host,
-        publicPort: settings.publicPort,
-        tlsMode: settings.tlsMode,
-        xray: xray.status(),
-        xrayVersion: xrayVersionString,
-        configs,
-        subUrl,
-        uptime: uptimeString(),
-        qrs,
-      })
-    );
-  }
+  if (sub === '/' || sub === '') return renderDashboard(req, res);
   return notFound(res);
 }
 
@@ -261,8 +324,7 @@ async function onRequest(req, res) {
     const p = url.pathname;
 
     if (p === '/health' || p === '/healthz') {
-      const st = xray.status();
-      return send(res, st.running ? 200 : 503, JSON.stringify({ ok: st.running, uptime: Date.now() - startedAt }), {
+      return send(res, 200, JSON.stringify({ ok: true, uptime: Date.now() - startedAt, active: proxy.stats.active }), {
         'Content-Type': 'application/json',
       });
     }
@@ -270,7 +332,7 @@ async function onRequest(req, res) {
     if (p.startsWith(settings.subPath + '/')) return handleSubscription(req, res, url);
 
     // A proxy path hit without an Upgrade header (e.g. a scanner) → plain 404.
-    if (xray.routes().has(p)) return notFound(res);
+    if (routes().has(p)) return notFound(res);
 
     if (p === '/') return send(res, 200, panel.decoyPage());
     return notFound(res);
@@ -280,44 +342,22 @@ async function onRequest(req, res) {
   }
 }
 
-// ---- WebSocket / HTTPUpgrade reverse proxy → xray ---------------------------------------
-// We do not speak WebSocket ourselves: the raw upgrade request is replayed to the
-// xray inbound for that path and the two sockets are piped together.
+// ---- WebSocket / HTTPUpgrade → native proxy engine --------------------------------------
 function onUpgrade(req, socket, head) {
   const pathname = req.url.split('?')[0];
-  const port = xray.routes().get(pathname);
-  if (!port) {
+  const route = routes().get(pathname);
+  if (!route) {
     socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
     return;
   }
-
-  const upstream = net.connect({ host: '127.0.0.1', port });
   socket.setNoDelay(true);
-  socket.setTimeout(0);
-  upstream.setNoDelay(true);
+  socket.setTimeout(settings.idleTimeout, () => socket.destroy());
+  socket.on('error', () => {});
 
-  const cleanup = () => {
-    socket.destroy();
-    upstream.destroy();
-  };
-
-  upstream.on('connect', () => {
-    // Rebuild the request line + headers exactly as received.
-    let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
-    for (let i = 0; i < req.rawHeaders.length; i += 2) {
-      raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
-    }
-    raw += '\r\n';
-    upstream.write(raw);
-    if (head && head.length) upstream.write(head);
-    socket.pipe(upstream);
-    upstream.pipe(socket);
-  });
-
-  upstream.on('error', cleanup);
-  socket.on('error', cleanup);
-  upstream.on('close', () => socket.destroy());
-  socket.on('close', () => upstream.destroy());
+  const stream = route.transport === 'ws' ? ws.acceptWebSocket(req, socket, head) : ws.acceptHttpUpgrade(req, socket, head);
+  if (!stream) return;
+  const ip = clientIp(req);
+  proxy.handle(stream, route.protocol, (msg) => plog(`${route.protocol}/${route.transport} ${ip} ${msg}`));
 }
 
 // ---- TLS (self-signed) -----------------------------------------------------------------
@@ -376,8 +416,6 @@ async function discoverHost() {
 }
 
 // ---- main -----------------------------------------------------------------------------------
-let xrayVersionString = 'unknown';
-
 async function main() {
   log(`starting on port ${settings.port} (tls mode: ${settings.tlsMode}${settings.onPaaS ? ', PaaS detected' : ''})`);
 
@@ -386,11 +424,6 @@ async function main() {
     settings.host = ip || '127.0.0.1';
     log(`public host not set; using ${settings.host}${ip ? '' : ' (could not detect public IP — set HOST)'}`);
   }
-
-  await xray.ensureBinary();
-  xrayVersionString = await xray.version();
-  log(xrayVersionString);
-  xray.start();
 
   let server;
   if (settings.tlsMode === 'self') {
@@ -407,14 +440,14 @@ async function main() {
     const scheme = settings.tlsMode === 'self' ? 'https' : 'http';
     log(`listening on ${scheme}://0.0.0.0:${settings.port}`);
     log(`panel: ${settings.panelPath}   subscription: ${settings.subPath}/<token>`);
+    log(`routes: ${[...routes().entries()].map(([k, v]) => `${k} (${v.protocol}/${v.transport})`).join(', ')}`);
     log(`clients connect to ${settings.host}:${settings.publicPort} ${links.tlsOn() ? 'with' : 'without'} TLS`);
   });
 
-  const shutdown = async (sig) => {
+  const shutdown = (sig) => {
     log(`${sig} received, shutting down`);
     server.close();
-    await xray.stop();
-    process.exit(0);
+    setTimeout(() => process.exit(0), 500).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
