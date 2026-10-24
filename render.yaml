@@ -1,0 +1,18 @@
+# Render.com blueprint — "New → Blueprint" and point it at this repo.
+services:
+  - type: web
+    name: v2gate
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: TLS_MODE
+        value: proxy
+      - key: UUID
+        generateValue: true
+      - key: TROJAN_PASSWORD
+        generateValue: true
+      - key: SUB_TOKEN
+        generateValue: true
+      - key: PANEL_PASSWORD
+        sync: false   # set it yourself in the dashboard

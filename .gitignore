@@ -1,0 +1,8 @@
+# runtime state — never commit (contains UUID, passwords, TLS key)
+data/
+bin/
+.env
+
+node_modules/
+npm-debug.log*
+.DS_Store
