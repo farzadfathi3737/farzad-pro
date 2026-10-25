@@ -27,6 +27,8 @@ export default {
     // Tell the app which public domain the visitor actually used.
     headers.set('X-Forwarded-Host', new URL(request.url).host);
 
-    return fetch(new Request(url.toString(), { method: request.method, headers, body: request.body, redirect: 'manual' }));
+    // redirect: 'manual' — pass 3xx responses (and their Set-Cookie) to the browser untouched.
+    const upstream = new Request(url.toString(), { method: request.method, headers, body: request.body, redirect: 'manual' });
+    return fetch(upstream, { redirect: 'manual' });
   },
 };

@@ -281,17 +281,31 @@ async function handlePanel(req, res, url) {
     const form = parseForm(await readBody(req));
     if (verifyPassword(form.password || '', state.panelPasswordHash)) {
       failures.delete(ip);
-      return send(res, 302, '', { Location: p, 'Set-Cookie': sessionCookie(req, makeSession(), SESSION_TTL / 1000) });
+      // A 200 page that navigates itself, not a 302: some proxies/Workers follow a
+      // redirect on the server side and drop the Set-Cookie of the 302 on the way.
+      return send(res, 200, panel.loginOkPage({ next: `${p}?from=login` }), {
+        'Set-Cookie': sessionCookie(req, makeSession(), SESSION_TTL / 1000),
+      });
     }
     noteFailure(ip);
     return send(res, 401, panel.loginPage({ action: `${p}/login`, error: 'رمز عبور اشتباه است.' }));
   }
 
-  if (!authed) return send(res, 200, panel.loginPage({ action: `${p}/login` }));
+  if (!authed) {
+    const fromLogin = url.searchParams.get('from') === 'login';
+    const hadAnyCookie = Boolean(req.headers.cookie);
+    const error = !fromLogin ? undefined
+      : cookies[COOKIE]
+        ? 'کوکی رسید ولی امضایش معتبر نیست — احتمالاً سرویس ری‌استارت شده و کلید نشست عوض شده. دوباره وارد شوید.'
+        : `رمز درست بود ولی مرورگر کوکی نشست را برنگرداند${hadAnyCookie ? '' : ' (هیچ کوکی‌ای ارسال نشد)'}. ` +
+          'اگر پشت Worker/پروکسی هستید، کوکی‌ها را عبور نمی‌دهد یا مرورگر کوکی را رد کرده (حالت خصوصی/مسدود بودن کوکی).';
+    if (fromLogin) log(`login cookie missing: cookieHeader=${hadAnyCookie} xfh=${req.headers['x-forwarded-host'] || '-'} xfp=${req.headers['x-forwarded-proto'] || '-'}`);
+    return send(res, 200, panel.loginPage({ action: `${p}/login`, error }));
+  }
 
   if (req.method === 'POST') {
     if (sub === '/logout') {
-      return send(res, 302, '', { Location: p, 'Set-Cookie': sessionCookie(req, '', 0) });
+      return send(res, 200, panel.loginOkPage({ next: p, text: 'خارج شدید.' }), { 'Set-Cookie': sessionCookie(req, '', 0) });
     }
     if (sub === '/rotate') {
       updateState({ uuid: crypto.randomUUID(), trojanPassword: randomToken(12), subToken: randomToken(16) });
