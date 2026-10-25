@@ -19,6 +19,7 @@ const { execFileSync } = require('child_process');
 const QR = require('./qr');
 const ws = require('./ws');
 const proxy = require('./proxy');
+const scan = require('./scan');
 const { settings, state, updateState, setPublicOverride, routes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
@@ -348,6 +349,23 @@ async function handlePanel(req, res, url) {
 
   // Cookie works → drop the token from the URL for a clean address.
   if (fromLogin && authCookie) return redirect(res, p);
+
+  // Clean-IP finder, server half: verify candidate edge IPs serve this panel.
+  // GET /panel/scan?count=60            → random Cloudflare candidates
+  // GET /panel/scan?ips=a,b,c           → verify a user-supplied list
+  if (sub === '/scan') {
+    if (!links.tlsOn() || net.isIP(settings.host)) {
+      return send(res, 400, JSON.stringify({ error: 'اسکن فقط وقتی معنی دارد که سرویس پشت Cloudflare با دامنه و TLS باشد.' }), { 'Content-Type': 'application/json' });
+    }
+    const listParam = (url.searchParams.get('ips') || '').split(/[\s,;]+/).map((s) => s.trim()).filter(scan.isIPv4).slice(0, 200);
+    const count = Math.min(200, Math.max(10, Number(url.searchParams.get('count')) || 60));
+    const ips = listParam.length ? listParam : scan.candidates(count);
+    const t0 = Date.now();
+    const results = await scan.verifyMany(ips, { port: Number(process.env.SCAN_PORT) || settings.publicPort });
+    const ok = results.filter((r) => r.ok).sort((a, b) => a.ms - b.ms);
+    log(`scan: ${ok.length}/${results.length} candidates serve ${settings.host} (${Date.now() - t0}ms)`);
+    return send(res, 200, JSON.stringify({ host: settings.host, tested: results.length, ok, failed: results.filter((r) => !r.ok).length }), { 'Content-Type': 'application/json' });
+  }
 
   // Tiny probe used by the dashboard's cookie check (JS fetch).
   if (sub === '/echo') {

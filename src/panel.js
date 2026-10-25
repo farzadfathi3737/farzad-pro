@@ -174,10 +174,67 @@ ${mismatchBox}
 وقتی سرویس پشت <b>Cloudflare</b> است (دامنه‌ی proxied یا Worker)، می‌توانید به‌جای دامنه، به یکی از IPهای کلودفلر که در ISP شما سالم است وصل شوید؛ SNI و Host همچنان دامنه‌ی اصلی می‌ماند.
 هر خط یک IP یا دامنه (مثل <span class="mono">162.159.x.x</span> یا یک ساب‌دامین CDN). برای هر IP، نسخه‌ای از همه‌ی کانفیگ‌ها ساخته و به سابسکریپشن اضافه می‌شود.
 </p>
-<form method="post" action="${act('cleanips')}">
-<textarea name="ips" placeholder="162.159.192.1&#10;188.114.96.1&#10;cdn.example.com">${esc((cleanIps || []).join('\n'))}</textarea>
+<form method="post" action="${act('cleanips')}" id="cleanips-form">
+<textarea name="ips" id="cleanips-text" placeholder="162.159.192.1&#10;188.114.96.1&#10;cdn.example.com">${esc((cleanIps || []).join('\n'))}</textarea>
 <div class="row" style="margin-top:10px"><button type="submit">ذخیره</button><span class="muted">${clean.length ? `${cleanIps.length} آدرس → ${clean.length} کانفیگ` : 'هنوز IP تمیزی ثبت نشده'}</span></div>
 </form>
+
+<div style="border-top:1px solid var(--line);margin:16px 0 0;padding-top:14px">
+<div class="top"><strong>یافتن خودکار IP تمیز</strong><span class="badge">دو مرحله: سرور + مرورگر شما</span></div>
+<p class="muted" style="margin:6px 0 10px">این اسکن را روی همان گوشی/اینترنتی اجرا کنید که می‌خواهید با آن وصل شوید. سرور چند ده IP کلودفلر را با SNI دامنه‌ی شما چک می‌کند که واقعاً این پنل را سرو کنند؛ بعد مرورگر شما همان‌ها را از سمت ISP خودتان زمان‌گیری می‌کند. نتیجه تقریبی است: IPهایی که سریع پاسخ می‌دهند را اضافه کنید و با Real delay در کلاینت تأیید بگیرید.</p>
+<div class="row">
+<button type="button" id="scan-btn" onclick="runScan()">اسکن خودکار</button>
+<select id="scan-count" style="padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:#0c0e12;color:var(--fg)">
+<option value="40">۴۰ نامزد (سریع)</option><option value="80" selected>۸۰ نامزد</option><option value="150">۱۵۰ نامزد (کامل‌تر)</option></select>
+<button type="button" class="ghost" onclick="runScan(document.getElementById('cleanips-text').value)">فقط لیست بالا را تست کن</button>
+<span id="scan-status" class="muted"></span>
+</div>
+<div id="scan-results" style="margin-top:12px"></div>
+</div>
+<script>
+var SCAN_URL = ${JSON.stringify(`${panelPath}/scan${sq}`)};
+function fmtMs(n){return n>=1000?(n/1000).toFixed(1)+' s':Math.round(n)+' ms'}
+function timeFromBrowser(ip){
+  // The browser cannot set SNI for a bare IP, so the TLS handshake "fails" after it
+  // completes; what we measure is how fast the edge answers from this network.
+  return new Promise(function(res){
+    var t0=performance.now(), done=false, ctrl=new AbortController();
+    var timer=setTimeout(function(){if(done)return;done=true;ctrl.abort();res({ip:ip,ms:4000,state:'timeout'})},4000);
+    fetch('https://'+ip+'/cdn-cgi/trace?'+Math.random(),{mode:'no-cors',cache:'no-store',signal:ctrl.signal,redirect:'manual'})
+      .then(function(){if(done)return;done=true;clearTimeout(timer);res({ip:ip,ms:performance.now()-t0,state:'ok'})})
+      .catch(function(){if(done)return;done=true;clearTimeout(timer);res({ip:ip,ms:performance.now()-t0,state:'reply'})});
+  });
+}
+async function runScan(list){
+  var btn=document.getElementById('scan-btn'), st=document.getElementById('scan-status'), out=document.getElementById('scan-results');
+  btn.disabled=true; out.innerHTML='';
+  try{
+    var q = list && list.trim() ? '&ips='+encodeURIComponent(list) : '&count='+document.getElementById('scan-count').value;
+    st.textContent='مرحله ۱: سرور دارد نامزدها را با SNI دامنه‌ی شما چک می‌کند…';
+    var r = await fetch(SCAN_URL+(SCAN_URL.indexOf('?')>-1?'':'?')+q,{credentials:'same-origin'});
+    var j = await r.json();
+    if(j.error){st.textContent=j.error;return}
+    if(!j.ok.length){st.textContent='هیچ‌کدام از '+j.tested+' نامزد این پنل را سرو نکرد. دوباره امتحان کنید.';return}
+    st.textContent='مرحله ۲: مرورگر شما '+j.ok.length+' IP تأییدشده را از سمت ISP خودتان زمان‌گیری می‌کند…';
+    var ips=j.ok.map(function(x){return x.ip}), timed=[], i=0, CONC=6;
+    async function w(){while(i<ips.length){var ip=ips[i++];timed.push(await timeFromBrowser(ip));st.textContent='مرحله ۲: '+timed.length+'/'+ips.length+' …'}}
+    await Promise.all(Array.from({length:Math.min(CONC,ips.length)},w));
+    timed.sort(function(a,b){return a.ms-b.ms});
+    var good=timed.filter(function(t){return t.state!=='timeout'});
+    st.textContent='تمام شد: '+good.length+' از '+timed.length+' IP از این شبکه پاسخ دادند. سریع‌ترین‌ها بالا هستند.';
+    var rows=timed.map(function(t){var slow=t.state==='timeout', cls=slow?'style="color:var(--err)"':(t.ms<800?'class="ok"':'style="color:var(--warn)"');
+      return '<tr><td><input type="checkbox" value="'+t.ip+'" '+(!slow&&t.ms<800?'checked':'')+'></td><td class="mono">'+t.ip+'</td><td '+cls+'>'+(slow?'بی‌پاسخ (۴ ثانیه)':fmtMs(t.ms))+'</td></tr>'}).join('');
+    out.innerHTML='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:13px"><tr><th></th><th style="text-align:right">IP</th><th style="text-align:right">زمان از مرورگر شما</th></tr>'+rows+'</table></div>'+
+      '<div class="row" style="margin-top:10px"><button type="button" onclick="addSelected()">افزودن انتخاب‌شده‌ها به لیست و ذخیره</button><span class="muted">پیش‌فرض: پاسخ زیر ۰٫۸ ثانیه انتخاب شده</span></div>';
+    out.querySelectorAll('table td,table th').forEach(function(c){c.style.padding='4px 8px';c.style.borderBottom='1px solid var(--line)'});
+  }catch(e){st.textContent='اسکن ناموفق: '+e.message}finally{btn.disabled=false}
+}
+function addSelected(){
+  var ta=document.getElementById('cleanips-text'); var have=ta.value.split(/\\s+/).filter(Boolean);
+  document.querySelectorAll('#scan-results input[type=checkbox]:checked').forEach(function(c){if(have.indexOf(c.value)===-1)have.push(c.value)});
+  ta.value=have.join('\\n'); document.getElementById('cleanips-form').submit();
+}
+</script>
 ${clean.length ? `<details><summary>نمایش کانفیگ‌های IP تمیز (${clean.length})</summary><div class="grid">${clean.map((c) => configCard(c, qrs)).join('')}</div></details>` : ''}
 </div>
 
