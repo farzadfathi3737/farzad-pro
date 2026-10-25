@@ -83,7 +83,15 @@ function isSecureRequest(req) {
   return xfp ? String(xfp).split(',')[0].trim() === 'https' : settings.tlsMode === 'proxy';
 }
 
+// Base URL for the subscription link. Built from the configured public address
+// (same host/port the proxy configs use) so it stays correct behind a Worker or
+// CDN that rewrites the Host header; falls back to the request when unset.
 function baseUrl(req) {
+  if (settings.host) {
+    const https = settings.tlsMode !== 'off';
+    const dflt = https ? 443 : 80;
+    return `${https ? 'https' : 'http'}://${settings.host}${settings.publicPort === dflt ? '' : ':' + settings.publicPort}`;
+  }
   const proto = isSecureRequest(req) ? 'https' : 'http';
   const host = req.headers['x-forwarded-host'] || req.headers.host || `${settings.host}:${settings.port}`;
   return `${proto}://${host}`;
