@@ -26,7 +26,7 @@ code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;dire
 .link{word-break:break-all;background:#0c0e12;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:12px;max-height:110px;overflow:auto;direction:ltr;text-align:left}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
 .cfg{display:flex;flex-direction:column;gap:10px;margin:0}
-.cfg img{width:160px;height:160px;border-radius:10px;background:#fff;padding:6px;align-self:center}
+.cfg img{width:200px;height:200px;border-radius:10px;background:#fff;padding:6px;align-self:center;cursor:zoom-in}
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid var(--line);color:var(--muted)}
 .kv{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;font-size:14px}.kv b{color:var(--muted);font-weight:500}
 .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
@@ -74,16 +74,35 @@ function fmtBytes(n) {
 function configCard(c, qrs) {
   return `<div class="card cfg">
 <div class="top"><strong>${esc(c.label)}</strong><span class="badge">${esc(c.protocol)} · ${esc(c.transport)}</span></div>
-<img alt="QR" src="${qrs[c.key]}">
+<img alt="QR" src="${qrs[c.key]}" onclick="showQr(this.src,'${esc(c.label)}')" title="برای بزرگ‌نمایی کلیک کنید">
 <div class="link mono" id="l-${esc(c.key)}">${esc(c.link)}</div>
-<div class="row"><button type="button" class="ghost" onclick="copyText('l-${esc(c.key)}',this)">کپی لینک</button></div>
+<div class="row"><button type="button" class="ghost" onclick="copyText('l-${esc(c.key)}',this)">کپی لینک</button>
+<button type="button" class="ghost" onclick="showQr(document.getElementById('l-${esc(c.key)}').previousElementSibling.src,'${esc(c.label)}')">QR بزرگ</button></div>
 </div>`;
 }
 
-function dashboard({ panelPath, host, publicPort, tlsMode, stats, configs, cleanIps, subUrl, uptime, qrs, notice }) {
+const QR_MODAL = `
+<div id="qrm" onclick="this.style.display='none'" style="display:none;position:fixed;inset:0;background:#000c;z-index:9;align-items:center;justify-content:center;flex-direction:column;gap:14px;cursor:zoom-out">
+<img id="qrm-img" alt="QR" style="width:min(92vw,560px);height:min(92vw,560px);background:#fff;padding:14px;border-radius:14px">
+<div id="qrm-cap" style="color:#fff;font-size:15px"></div>
+<div class="muted">برای بستن کلیک کنید</div>
+</div>
+<script>
+function showQr(src,cap){var m=document.getElementById('qrm');document.getElementById('qrm-img').src=src;document.getElementById('qrm-cap').textContent=cap||'';m.style.display='flex'}
+</script>`;
+
+function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAddr, mismatch, stats, configs, cleanIps, subUrl, uptime, qrs, notice }) {
   const tlsLabel = { proxy: 'TLS (توسط هاست / کلودفلر)', self: 'TLS (گواهی خودامضا)', off: 'بدون TLS' }[tlsMode] || tlsMode;
   const main = configs.filter((c) => !c.isClean);
   const clean = configs.filter((c) => c.isClean);
+
+  const mismatchBox = mismatch
+    ? `<div class="notice" style="border-color:var(--warn)">
+<strong class="warn">⚠ آدرس کانفیگ‌ها با آدرسی که پنل را باز کرده‌اید فرق دارد.</strong>
+<div class="muted" style="margin:6px 0 10px">شما از <span class="mono">${reqAddr.tls === 'proxy' ? 'https' : 'http'}://${esc(reqAddr.host)}:${reqAddr.port}</span> وارد شده‌اید، ولی کانفیگ‌ها به <span class="mono">${esc(host)}:${publicPort}</span> (${esc(tlsLabel)}) اشاره می‌کنند. اگر کلاینت‌ها باید از همین آدرسِ مرورگر وصل شوند — که معمولاً همین‌طور است — دکمه‌ی زیر را بزنید تا آدرس، پورت و TLS از روی همین درخواست تنظیم شود.</div>
+<form method="post" action="${esc(panelPath)}/usehost"><button type="submit">استفاده از آدرس ${esc(reqAddr.host)}</button></form>
+</div>`
+    : '';
 
   return page(
     'پنل V2Gate',
@@ -91,9 +110,10 @@ function dashboard({ panelPath, host, publicPort, tlsMode, stats, configs, clean
 <form method="post" action="${esc(panelPath)}/logout"><button class="ghost" type="submit">خروج</button></form></div>
 
 ${notice ? `<div class="notice ${notice.ok ? 'ok' : 'err'}">${esc(notice.text)}</div>` : ''}
+${mismatchBox}
 
 <div class="card"><div class="kv">
-<b>آدرس سرور</b><span class="mono">${esc(host)}:${publicPort}</span>
+<b>آدرس سرور</b><span><span class="mono">${esc(host)}:${publicPort}</span>${publicOverride ? ` <span class="badge">تنظیم‌شده از پنل</span> <form method="post" action="${esc(panelPath)}/clearhost" style="display:inline"><button type="submit" class="ghost" style="padding:2px 8px;font-size:12px">پاک کردن</button></form>` : ''}</span>
 <b>حالت TLS</b><span>${esc(tlsLabel)}</span>
 <b>اتصال‌های فعال</b><span>${stats.active} <span class="muted">(کل: ${stats.total} · خطا: ${stats.errors})</span></span>
 <b>ترافیک</b><span class="mono">↑ ${fmtBytes(stats.bytesIn)} &nbsp; ↓ ${fmtBytes(stats.bytesOut)}</span>
@@ -107,7 +127,7 @@ ${notice ? `<div class="notice ${notice.ok ? 'ok' : 'err'}">${esc(notice.text)}<
 <div class="card">
 <div class="top"><strong>لینک سابسکریپشن</strong><span class="badge">v2rayNG · v2rayN · Hiddify · Streisand · NekoBox</span></div>
 <p class="muted" style="margin:6px 0 10px">این لینک را در بخش Subscription برنامه‌تان اضافه کنید. همه کانفیگ‌ها (شامل IPهای تمیز) با یک‌بار آپدیت دریافت می‌شوند. این لینک را عمومی نکنید.</p>
-<div class="row" style="align-items:flex-start"><img alt="QR" src="${qrs.__sub}" style="width:140px;height:140px;border-radius:10px;background:#fff;padding:6px">
+<div class="row" style="align-items:flex-start"><img alt="QR" src="${qrs.__sub}" onclick="showQr(this.src,'لینک سابسکریپشن')" title="برای بزرگ‌نمایی کلیک کنید" style="width:140px;height:140px;border-radius:10px;background:#fff;padding:6px;cursor:zoom-in">
 <div style="flex:1;min-width:240px"><div class="link mono" id="l-sub">${esc(subUrl)}</div>
 <div class="row" style="margin-top:10px"><button type="button" class="ghost" onclick="copyText('l-sub',this)">کپی لینک</button>
 <a class="btn ghost" href="${esc(subUrl)}?format=clash" download="v2gate.yaml">دانلود Clash</a>
@@ -141,7 +161,7 @@ ${clean.length ? `<details><summary>نمایش کانفیگ‌های IP تمیز
 function copyText(id,btn){var t=document.getElementById(id).textContent.trim();
 var done=function(){var o=btn.textContent;btn.textContent='کپی شد ✓';setTimeout(function(){btn.textContent=o},1500)};
 if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(done)}else{var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done()}catch(e){}document.body.removeChild(ta)}}
-</script>`
+</script>${QR_MODAL}`
   );
 }
 
