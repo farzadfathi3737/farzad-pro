@@ -53,23 +53,26 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // People paste "https://my.host/" or "my.host:8443" into HOST — accept all of
 // those and pull out just the hostname (and the port, if one was given).
+// "https://my.host/" also tells us the public side is TLS on 443.
 function parseHostInput(raw) {
   let s = String(raw || '').trim();
-  if (!s) return { host: '', port: null };
-  if (!/^[a-z]+:\/\//i.test(s)) s = 'http://' + s;
+  if (!s) return { host: '', port: null, https: null };
+  const hasScheme = /^[a-z]+:\/\//i.test(s);
+  if (!hasScheme) s = 'http://' + s;
   try {
     const u = new URL(s);
     const host = u.hostname.replace(/^\[|\]$/g, '');
     const port = u.port ? Number(u.port) : null;
-    return { host, port };
+    const https = hasScheme ? u.protocol === 'https:' : null;
+    return { host, port, https };
   } catch {
-    return { host: String(raw).trim().replace(/^https?:\/\//i, '').split(/[/:?#]/)[0], port: null };
+    return { host: String(raw).trim().replace(/^https?:\/\//i, '').split(/[/:?#]/)[0], port: null, https: null };
   }
 }
 
 const hostEnv = parseHostInput(env('HOST', platformHost || ''));
 const localPort = Number(env('PORT', env('SERVER_PORT', 3000)));
-const tlsEnv = env('TLS_MODE', onPaaS ? 'proxy' : 'off');
+const tlsEnv = env('TLS_MODE', onPaaS || hostEnv.https === true ? 'proxy' : 'off');
 const defaultPublicPort = onPaaS || tlsEnv === 'proxy' ? 443 : localPort;
 
 // ---- static settings ----------------------------------------------------------

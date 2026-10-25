@@ -99,7 +99,7 @@ function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAd
   const mismatchBox = mismatch
     ? `<div class="notice" style="border-color:var(--warn)">
 <strong class="warn">⚠ آدرس کانفیگ‌ها با آدرسی که پنل را باز کرده‌اید فرق دارد.</strong>
-<div class="muted" style="margin:6px 0 10px">شما از <span class="mono">${reqAddr.tls === 'proxy' ? 'https' : 'http'}://${esc(reqAddr.host)}:${reqAddr.port}</span> وارد شده‌اید، ولی کانفیگ‌ها به <span class="mono">${esc(host)}:${publicPort}</span> (${esc(tlsLabel)}) اشاره می‌کنند. اگر کلاینت‌ها باید از همین آدرسِ مرورگر وصل شوند — که معمولاً همین‌طور است — دکمه‌ی زیر را بزنید تا آدرس، پورت و TLS از روی همین درخواست تنظیم شود.</div>
+<div class="muted" style="margin:6px 0 10px">شما از <span class="mono">${reqAddr.tls === 'proxy' ? 'https' : 'http'}://${esc(reqAddr.host)}:${reqAddr.port}</span> وارد شده‌اید، ولی کانفیگ‌ها به <span class="mono">${esc(host)}:${publicPort}</span> (${esc(tlsLabel)}) اشاره می‌کنند. اگر کلاینت‌ها باید از همین آدرسِ مرورگر وصل شوند، دکمه‌ی زیر را بزنید تا آدرس، پورت و TLS از روی همین درخواست تنظیم شود. <b>اگر آدرس نشان‌داده‌شده دامنه‌ی هاست است نه دامنه‌ی خودتان</b> (مثلاً پشت Worker هستید و Worker هدر Host را عوض می‌کند)، نزنید و به‌جایش <span class="mono">HOST</span> را روی دامنه‌ی خودتان بگذارید.</div>
 <form method="post" action="${esc(panelPath)}/usehost"><button type="submit">استفاده از آدرس ${esc(reqAddr.host)}</button></form>
 </div>`
     : '';

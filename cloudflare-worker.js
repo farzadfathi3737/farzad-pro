@@ -24,6 +24,8 @@ export default {
     const headers = new Headers(request.headers);
     headers.set('Host', origin);
     headers.set('X-Forwarded-Proto', 'https');
+    // Tell the app which public domain the visitor actually used.
+    headers.set('X-Forwarded-Host', new URL(request.url).host);
 
     return fetch(new Request(url.toString(), { method: request.method, headers, body: request.body, redirect: 'manual' }));
   },
