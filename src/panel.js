@@ -146,9 +146,14 @@ ${mismatchBox}
 <b>مدت اجرا</b><span>${esc(uptime)}</span>
 </div>
 <div class="row" style="margin-top:12px">
-<form method="post" action="${act('selftest')}"><button class="ghost" type="submit">تست داخلی پروکسی</button></form>
-<span class="muted">یک اتصال VLESS از خود سرور به اینترنت برقرار می‌کند؛ اگر موفق بود یعنی موتور سالم است و مشکل احتمالی در مسیر شبکه‌ی شما تا سرور است.</span>
-</div></div>
+<form method="post" action="${act('selftest')}"><button class="ghost" type="submit">۱ · تست داخلی</button></form>
+<span class="muted">موتور پروکسی + خروجی سرور به اینترنت (بدون عبور از Cloudflare/هاست).</span>
+</div>
+<form method="post" action="${act('extest')}" class="row" style="margin-top:10px">
+<button class="ghost" type="submit">۲ · تست از بیرون</button>
+<input type="text" name="address" id="extest-address" placeholder="اختیاری: IP تمیز برای تست (خالی = دامنه)" style="flex:1;min-width:220px;max-width:360px;padding:8px 10px;font-size:13px">
+<span class="muted">سرور از طریق آدرس عمومی (${esc(host)}:${publicPort}) به خودش وصل می‌شود — همان مسیری که کلاینت می‌رود، منهای ISP شما. اگر موفق شد، WebSocket از Cloudflare و هاست عبور می‌کند.</span>
+</form></div>
 
 <div class="card">
 <div class="top"><strong>لینک سابسکریپشن</strong><span class="badge">v2rayNG · v2rayN · Hiddify · Streisand · NekoBox</span></div>

@@ -165,27 +165,50 @@ function qr(text) {
   return url;
 }
 
-// ---- self-test: act as a VLESS client against ourselves ------------------------------
-async function selfTest() {
+// ---- self-tests: act as a VLESS/Trojan client ---------------------------------------
+// mode 'internal' → 127.0.0.1:$PORT (proves the engine + outbound internet).
+// mode 'external' → the public address (Cloudflare → Worker → host → us): proves the
+// whole chain passes WebSocket. `address` optionally replaces the host (a clean IP).
+async function selfTest(mode = 'internal', address = '') {
   const target = new URL(process.env.SELFTEST_URL || 'http://www.gstatic.com/generate_204');
   const port = Number(target.port) || 80;
   const p = paths();
   const useVless = settings.enable.vlessWs;
   if (!useVless && !settings.enable.trojanWs) return { ok: false, text: 'هیچ کانفیگ WebSocket فعالی برای تست وجود ندارد.' };
   const started = Date.now();
+  const external = mode === 'external';
+  const connHost = external ? (address || settings.host) : '127.0.0.1';
+  const connPort = external ? settings.publicPort : settings.port;
+  const secure = external ? links.tlsOn() : settings.tlsMode === 'self';
+  const where = external ? `${connHost}:${connPort} (SNI/Host ${settings.host})` : `127.0.0.1:${settings.port}`;
   let stream;
   try {
     stream = await ws.connectWebSocket({
-      host: '127.0.0.1',
-      port: settings.port,
+      host: connHost,
+      port: connPort,
       path: useVless ? p.vlessWs : p.trojanWs,
-      secure: settings.tlsMode === 'self',
-      rejectUnauthorized: false,
+      secure,
+      rejectUnauthorized: external && settings.tlsMode !== 'self',
       servername: settings.host,
       headers: { Host: settings.host },
+      timeout: 12000,
     });
   } catch (e) {
-    return { ok: false, text: `اتصال WebSocket به خود سرور شکست خورد: ${e.message}` };
+    const hint = /handshake failed \((\d+)\)/.exec(e.message);
+    let why = e.message;
+    if (hint) {
+      const code = hint[1];
+      why = `دست‌دادن WebSocket رد شد با HTTP ${code}` + (
+        code === '404' ? ' — مسیر به سرور رسید ولی شناخته نشد؛ UUID/مسیر کانفیگ با سرور فرق دارد (احتمالاً state عوض شده).' :
+        code === '426' || code === '400' ? ' — یک پروکسی در مسیر Upgrade را نمی‌پذیرد.' :
+        code === '502' || code === '503' || code === '504' ? ' — Worker/پروکسی هاست نتوانست به سرور وصل شود یا WebSocket را عبور نمی‌دهد.' :
+        code === '403' ? ' — Cloudflare/هاست درخواست را بلاک کرد (WAF، Bot Fight Mode).' :
+        code === '200' ? ' — به‌جای 101 یک صفحه‌ی معمولی برگشت؛ پروکسی هاست Upgrade را به درخواست عادی تبدیل می‌کند (WebSocket پشتیبانی نمی‌شود).' : '');
+    } else if (/ENOTFOUND|EAI_AGAIN/.test(why)) why = `نام ${connHost} resolve نشد.`;
+    else if (/ECONNREFUSED/.test(why)) why = `اتصال به ${where} رد شد.`;
+    else if (/timeout/i.test(why)) why = `اتصال به ${where} زمانش تمام شد (بسته یا فیلتر).`;
+    else if (/certificate|self signed|unable to verify/i.test(why)) why = `گواهی TLS نامعتبر: ${why}`;
+    return { ok: false, text: `${external ? 'تست از بیرون' : 'تست داخلی'} ناموفق — ${why}` };
   }
   return new Promise((resolve) => {
     const header = useVless ? proxy.buildVlessHeader(target.hostname, port) : proxy.buildTrojanHeader(target.hostname, port);
@@ -207,7 +230,9 @@ async function selfTest() {
         const ms = Date.now() - started;
         const ok = m[1][0] === '2' || m[1][0] === '3';
         finish({ ok, text: ok
-          ? `موفق — ${useVless ? 'VLESS' : 'Trojan'} over WebSocket → ${target.hostname} پاسخ HTTP ${m[1]} داد (${ms}ms). موتور پروکسی سالم است.`
+          ? (external
+            ? `موفق — از ${where} تا سرور، WebSocket و ${useVless ? 'VLESS' : 'Trojan'} کامل عبور کرد و ${target.hostname} پاسخ HTTP ${m[1]} داد (${ms}ms). کل زنجیره سالم است؛ اگر کلاینت وصل نمی‌شود، مشکل مسیر ISP شما تا Cloudflare است (IP تمیز).`
+            : `موفق — ${useVless ? 'VLESS' : 'Trojan'} over WebSocket → ${target.hostname} پاسخ HTTP ${m[1]} داد (${ms}ms). موتور پروکسی سالم است.`)
           : `مقصد پاسخ HTTP ${m[1]} داد (${ms}ms).` });
       }
     });
@@ -357,8 +382,15 @@ async function handlePanel(req, res, url) {
       return redirect(res, back);
     }
     if (sub === '/selftest') {
-      const r = await selfTest();
+      const r = await selfTest('internal');
       log('self-test:', r.ok ? 'OK' : 'FAIL', '-', r.text);
+      return renderDashboard(req, res, r, sq);
+    }
+    if (sub === '/extest') {
+      const form = parseForm(await readBody(req));
+      const addr = (form.address || '').trim().replace(/^https?:\/\//, '').split(/[/:]/)[0];
+      const r = await selfTest('external', addr);
+      log('external test:', r.ok ? 'OK' : 'FAIL', '-', r.text);
       return renderDashboard(req, res, r, sq);
     }
     return notFound(res);
