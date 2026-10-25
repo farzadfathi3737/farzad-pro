@@ -4,6 +4,7 @@
 // TLS SNI and Host header still carry the real hostname.
 
 const { settings, state, paths } = require('./config');
+const xray = require('./xray');
 
 function tlsOn() {
   return settings.tlsMode === 'proxy' || settings.tlsMode === 'self';
@@ -53,6 +54,26 @@ function trojanLink({ address, path, network, label }) {
   return `trojan://${encodeURIComponent(state.trojanPassword)}@${address}:${settings.publicPort}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
 
+function vmessLink({ address, path, network, label }) {
+  const tls = tlsOn();
+  const obj = {
+    v: '2', ps: name(label), add: address, port: String(settings.publicPort), id: state.uuid, aid: '0', scy: 'auto',
+    net: network, type: 'none', host: settings.host, path, tls: tls ? 'tls' : '', sni: tls ? settings.host : '',
+    fp: tls ? 'chrome' : '', alpn: '',
+  };
+  if (tls && insecure()) obj.allowInsecure = true;
+  return 'vmess://' + Buffer.from(JSON.stringify(obj)).toString('base64');
+}
+
+// Shadowsocks over WebSocket (v2ray-plugin style): NekoBox, Shadowrocket, Clash Meta.
+function ssLink({ address, path, label }) {
+  const tls = tlsOn();
+  const userinfo = Buffer.from(`${settings.ssMethod}:${state.ssPassword}`).toString('base64url');
+  const plugin = ['v2ray-plugin', tls ? 'tls' : '', `host=${settings.host}`, `path=${path}`, 'mode=websocket', tls && insecure() ? 'skip-cert-verify' : '']
+    .filter(Boolean).join(';');
+  return `ss://${userinfo}@${address}:${settings.publicPort}?plugin=${encodeURIComponent(plugin)}#${encodeURIComponent(name(label))}`;
+}
+
 // The protocol/transport combinations that are enabled.
 function kinds() {
   const p = paths();
@@ -63,6 +84,12 @@ function kinds() {
   if (settings.enable.trojanHu) out.push({ key: 'trojanHu', protocol: 'Trojan', transport: 'HTTPUpgrade', network: 'httpupgrade', path: p.trojanHu, build: trojanLink, tag: 'Trojan-HU' });
   if (settings.enable.vlessXh) out.push({ key: 'vlessXh', protocol: 'VLESS', transport: 'XHTTP', network: 'xhttp', path: p.vlessXh, build: vlessLink, tag: 'VLESS-XHTTP' });
   if (settings.enable.trojanXh) out.push({ key: 'trojanXh', protocol: 'Trojan', transport: 'XHTTP', network: 'xhttp', path: p.trojanXh, build: trojanLink, tag: 'Trojan-XHTTP' });
+  // Xray-served protocols appear only while Xray is actually running.
+  if (xray.status.phase === 'running') {
+    if (settings.enable.vmessWs) out.push({ key: 'vmessWs', protocol: 'VMess', transport: 'WebSocket', network: 'ws', path: p.vmessWs, build: vmessLink, tag: 'VMess-WS', engine: 'xray' });
+    if (settings.enable.vmessHu) out.push({ key: 'vmessHu', protocol: 'VMess', transport: 'HTTPUpgrade', network: 'httpupgrade', path: p.vmessHu, build: vmessLink, tag: 'VMess-HU', engine: 'xray' });
+    if (settings.enable.ssWs) out.push({ key: 'ssWs', protocol: 'Shadowsocks', transport: 'WebSocket', network: 'ws', path: p.ssWs, build: ssLink, tag: 'SS-WS', engine: 'xray' });
+  }
   return out;
 }
 
@@ -75,7 +102,7 @@ function allConfigs() {
   const out = [];
   for (const k of kinds()) {
     out.push({
-      key: k.key, protocol: k.protocol, transport: k.transport, path: k.path,
+      key: k.key, protocol: k.protocol, transport: k.transport, path: k.path, engine: k.engine || 'native',
       address: settings.host, isClean: false,
       label: `${k.protocol} ${k.transport} ${tls}`,
       link: k.build({ address: settings.host, path: k.path, network: k.network, label: `${k.tag}-${tls}` }),
@@ -84,7 +111,7 @@ function allConfigs() {
   for (const ip of state.cleanIps || []) {
     for (const k of kinds()) {
       out.push({
-        key: `${k.key}@${ip}`, protocol: k.protocol, transport: k.transport, path: k.path,
+        key: `${k.key}@${ip}`, protocol: k.protocol, transport: k.transport, path: k.path, engine: k.engine || 'native',
         address: ip, isClean: true,
         label: `${k.protocol} ${k.transport} · ${ip}`,
         link: k.build({ address: ip, path: k.path, network: k.network, label: `${k.tag} ${ip}` }),
@@ -94,20 +121,51 @@ function allConfigs() {
   return out;
 }
 
-function subscriptionRaw() {
-  return allConfigs().map((c) => c.link).join('\n') + '\n';
+// Tags a config can be filtered by: protocol, transport, engine, clean/main.
+function tagsOf(c) {
+  return new Set([
+    c.protocol.toLowerCase(),                                   // vless trojan vmess shadowsocks
+    c.protocol === 'Shadowsocks' ? 'ss' : null,
+    c.transport === 'WebSocket' ? 'ws' : c.transport.toLowerCase(), // ws httpupgrade xhttp
+    c.engine,                                                   // native xray
+    c.isClean ? 'clean' : 'main',
+  ].filter(Boolean));
 }
 
-function subscriptionBase64() {
-  return Buffer.from(subscriptionRaw()).toString('base64');
+/**
+ * Build a predicate from ?only=a,b&exclude=c,d (comma lists of tags above).
+ * "compat" is a shorthand for the set every client understands: vless/trojan over ws.
+ */
+function makeFilter({ only = '', exclude = '' } = {}) {
+  const split = (s) => String(s || '').toLowerCase().split(/[\s,]+/).filter(Boolean);
+  let onlyTags = split(only);
+  let exTags = split(exclude);
+  if (onlyTags.includes('compat') || exTags.includes('compat')) {
+    onlyTags = onlyTags.filter((t) => t !== 'compat');
+    exTags = [...exTags.filter((t) => t !== 'compat'), 'xhttp', 'httpupgrade', 'ss', 'vmess'];
+  }
+  return (c) => {
+    const t = tagsOf(c);
+    if (exTags.some((x) => t.has(x))) return false;
+    if (onlyTags.length && !onlyTags.some((x) => t.has(x))) return false;
+    return true;
+  };
+}
+
+function subscriptionRaw(filter = () => true) {
+  return allConfigs().filter(filter).map((c) => c.link).join('\n') + '\n';
+}
+
+function subscriptionBase64(filter) {
+  return Buffer.from(subscriptionRaw(filter)).toString('base64');
 }
 
 // Minimal Clash Meta (mihomo) YAML — handy for Clash Verge / Stash / Hiddify.
-function clashYaml() {
+function clashYaml(filter = () => true) {
   const tls = tlsOn();
   const proxies = [];
-  for (const c of allConfigs()) {
-    if (c.transport === 'XHTTP') continue; // not supported by Clash/mihomo
+  for (const c of allConfigs().filter(filter)) {
+    if (c.transport === 'XHTTP' || c.protocol === 'VMess' || c.protocol === 'Shadowsocks') continue; // kept simple: vless/trojan only
     const n = name(c.isClean ? `${c.protocol}-${c.transport} ${c.address}` : `${c.protocol}-${c.transport}`);
     const common =
       `    server: ${c.address}\n    port: ${settings.publicPort}\n    udp: false\n` +
@@ -129,4 +187,4 @@ function subscriptionUrl(baseUrl) {
   return `${baseUrl}${settings.subPath}/${state.subToken}`;
 }
 
-module.exports = { allConfigs, subscriptionRaw, subscriptionBase64, clashYaml, subscriptionUrl, tlsOn, insecure };
+module.exports = { allConfigs, subscriptionRaw, subscriptionBase64, clashYaml, subscriptionUrl, makeFilter, tlsOn, insecure };

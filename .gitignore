@@ -1,5 +1,6 @@
 # runtime state — never commit (contains UUID, passwords, TLS key)
 data/
+bin/
 
 .env
 
