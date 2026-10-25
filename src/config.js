@@ -51,25 +51,49 @@ const onPaaS = Boolean(platformHost);
 const DATA_DIR = path.resolve(ROOT, env('DATA_DIR', 'data'));
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// People paste "https://my.host/" or "my.host:8443" into HOST — accept all of
+// those and pull out just the hostname (and the port, if one was given).
+function parseHostInput(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return { host: '', port: null };
+  if (!/^[a-z]+:\/\//i.test(s)) s = 'http://' + s;
+  try {
+    const u = new URL(s);
+    const host = u.hostname.replace(/^\[|\]$/g, '');
+    const port = u.port ? Number(u.port) : null;
+    return { host, port };
+  } catch {
+    return { host: String(raw).trim().replace(/^https?:\/\//i, '').split(/[/:?#]/)[0], port: null };
+  }
+}
+
+const hostEnv = parseHostInput(env('HOST', platformHost || ''));
+const localPort = Number(env('PORT', env('SERVER_PORT', 3000)));
+const tlsEnv = env('TLS_MODE', onPaaS ? 'proxy' : 'off');
+const defaultPublicPort = onPaaS || tlsEnv === 'proxy' ? 443 : localPort;
+
 // ---- static settings ----------------------------------------------------------
 const settings = {
   root: ROOT,
   dataDir: DATA_DIR,
 
   // The single public port the host gives us.
-  port: Number(env('PORT', env('SERVER_PORT', 3000))),
+  port: localPort,
 
   // Public hostname clients should connect to (also the TLS SNI / Host header).
   // Auto-detected on PaaS, otherwise resolved from the public IP at startup.
-  host: env('HOST', platformHost || ''),
-  // Public port clients connect to (443 on PaaS, otherwise the same as `port`).
-  publicPort: Number(env('PUBLIC_PORT', onPaaS ? 443 : env('PORT', env('SERVER_PORT', 3000)))),
+  host: hostEnv.host,
+  // Public port clients connect to (443 on PaaS/behind a TLS proxy, otherwise `port`).
+  publicPort: Number(env('PUBLIC_PORT', hostEnv.port || defaultPublicPort)),
 
   // TLS mode:
   //   proxy → host/Cloudflare terminates TLS. We serve plain HTTP.
   //   self  → we serve HTTPS with a self-signed cert (VPS / raw port).
   //   off   → plain HTTP, configs without TLS.
-  tlsMode: env('TLS_MODE', onPaaS ? 'proxy' : 'off'),
+  tlsMode: tlsEnv,
+
+  // True when host/port/tls came from the panel's "use this address" button.
+  publicOverride: false,
 
   panelPath: '/' + env('PANEL_PATH', 'panel').replace(/^\/+|\/+$/g, ''),
   subPath: '/' + env('SUB_PATH', 'sub').replace(/^\/+|\/+$/g, ''),
@@ -210,6 +234,23 @@ function updateState(patch) {
   return state;
 }
 
+// A public address saved from the panel beats env/auto-detection (TLS 'self' is
+// a server mode and can't be switched live, so it is never overridden).
+function applyPublicOverride() {
+  const o = state.publicOverride;
+  if (!o || !o.host) { settings.publicOverride = false; return; }
+  settings.host = o.host;
+  settings.publicPort = Number(o.port) || 443;
+  if (settings.tlsMode !== 'self') settings.tlsMode = o.tls === 'proxy' ? 'proxy' : 'off';
+  settings.publicOverride = true;
+}
+applyPublicOverride();
+
+function setPublicOverride(o) {
+  updateState({ publicOverride: o ? { host: parseHostInput(o.host).host, port: Number(o.port) || 443, tls: o.tls } : null });
+  applyPublicOverride();
+}
+
 // Transport paths — derived from the UUID so they are not guessable by scanners.
 function paths() {
   const tag = state.uuid.replace(/-/g, '').slice(0, 8);
@@ -236,6 +277,8 @@ module.exports = {
   settings,
   state,
   updateState,
+  setPublicOverride,
+  parseHostInput,
   paths,
   routes,
   parseCleanIps,

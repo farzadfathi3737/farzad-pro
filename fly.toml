@@ -1,0 +1,31 @@
+# Fly.io config — `fly launch --no-deploy` (keep this file when asked), then
+# `fly secrets set PANEL_PASSWORD=... UUID=... TROJAN_PASSWORD=... SUB_TOKEN=...`
+# and `fly deploy`. Change `app` to your own app name (becomes <app>.fly.dev).
+app = "v2gate"
+primary_region = "fra"   # fra = Frankfurt, ams = Amsterdam, arn = Stockholm
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  TLS_MODE = "proxy"
+  PUBLIC_PORT = "443"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "off"     # keep the proxy always on
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

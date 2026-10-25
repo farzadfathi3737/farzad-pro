@@ -19,7 +19,7 @@ const { execFileSync } = require('child_process');
 const QR = require('./qr');
 const ws = require('./ws');
 const proxy = require('./proxy');
-const { settings, state, updateState, routes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
+const { settings, state, updateState, setPublicOverride, routes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
 
@@ -87,6 +87,16 @@ function baseUrl(req) {
   const proto = isSecureRequest(req) ? 'https' : 'http';
   const host = req.headers['x-forwarded-host'] || req.headers.host || `${settings.host}:${settings.port}`;
   return `${proto}://${host}`;
+}
+
+// The public address the *browser* used to reach us — what clients should use too.
+function requestAddress(req) {
+  const secure = isSecureRequest(req);
+  const raw = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(raw);
+  const host = m ? m[1].replace(/^\[|\]$/g, '') : raw;
+  const port = m && m[2] ? Number(m[2]) : secure ? 443 : 80;
+  return { host, port, tls: secure ? 'proxy' : 'off' };
 }
 
 function uptimeString() {
@@ -204,6 +214,11 @@ function renderDashboard(req, res, notice) {
   const subUrl = links.subscriptionUrl(baseUrl(req));
   const qrs = { __sub: qr(subUrl) };
   for (const c of configs) qrs[c.key] = qr(c.link);
+  const reqAddr = requestAddress(req);
+  const isLocal = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(reqAddr.host);
+  const mismatch = !isLocal && reqAddr.host &&
+    (reqAddr.host !== settings.host || reqAddr.port !== settings.publicPort ||
+      (settings.tlsMode !== 'self' && reqAddr.tls !== settings.tlsMode));
   return send(
     res,
     200,
@@ -212,6 +227,9 @@ function renderDashboard(req, res, notice) {
       host: settings.host,
       publicPort: settings.publicPort,
       tlsMode: settings.tlsMode,
+      publicOverride: settings.publicOverride,
+      reqAddr,
+      mismatch,
       stats: proxy.stats,
       configs,
       cleanIps: state.cleanIps || [],
@@ -272,6 +290,19 @@ async function handlePanel(req, res, url) {
       qrCache.clear();
       log('credentials rotated');
       return redirect(res, p);
+    }
+    if (sub === '/usehost') {
+      const a = requestAddress(req);
+      setPublicOverride(a);
+      qrCache.clear();
+      log(`public address set from panel: ${a.host}:${a.port} tls=${a.tls}`);
+      return redirect(res, p);
+    }
+    if (sub === '/clearhost') {
+      setPublicOverride(null);
+      qrCache.clear();
+      log('public address override cleared — restart to re-apply env/auto-detected values');
+      return renderDashboard(req, res, { ok: true, text: 'آدرس دستی پاک شد. برای اعمال مقادیر env/خودکار، سرویس را ری‌استارت کنید.' });
     }
     if (sub === '/cleanips') {
       const form = parseForm(await readBody(req));
