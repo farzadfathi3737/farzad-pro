@@ -2,11 +2,11 @@
 
 # V2Gate — سرور تک‌پورتی VLESS/Trojan با موتور بومی Node.js
 
-یک اپ کوچک Node.js که روی **یک پورت** بالا می‌آید و **خودش** پروتکل‌های **VLESS** و **Trojan** را (روی WebSocket و HTTPUpgrade) اجرا می‌کند — بدون Xray، بدون باینری خارجی، بدون هیچ وابستگی npm. کانفیگ‌ها و لینک سابسکریپشن را از پنل می‌گیرید و با v2rayNG / Hiddify / v2rayN / Streisand / NekoBox / Clash استفاده می‌کنید.
+یک اپ کوچک Node.js که روی **یک پورت** بالا می‌آید و **خودش** پروتکل‌های **VLESS** و **Trojan** را (روی WebSocket، HTTPUpgrade و **XHTTP**) اجرا می‌کند — بدون Xray، بدون باینری خارجی، بدون هیچ وابستگی npm. کانفیگ‌ها و لینک سابسکریپشن را از پنل می‌گیرید و با v2rayNG / Hiddify / v2rayN / Streisand / NekoBox / Clash استفاده می‌کنید.
 
-- **کاملاً بومی**: WebSocket (RFC 6455)، VLESS، Trojan، رله‌ی TCP و DNS همه در خود Node
-- **IP تمیز**: لیست IPهای تمیز کلودفلر را در پنل بدهید؛ برای هر IP، کانفیگ جدا ساخته و به سابسکریپشن اضافه می‌شود
-- **تست داخلی**: یک دکمه در پنل که از خود سرور یک اتصال VLESS به اینترنت می‌زند تا مشخص شود مشکل از سرور است یا مسیر شبکه
+- **کاملاً بومی**: WebSocket (RFC 6455)، XHTTP (SplitHTTP: بدون WebSocket، فقط GET/POST معمولی — برای شبکه‌هایی که اتصال‌های طولانی به CDN را می‌کُشند)، VLESS، Trojan، رله‌ی TCP و DNS همه در خود Node
+- **IP تمیز**: لیست IPهای تمیز کلودفلر را در پنل بدهید یا با «اسکن خودکار» (سرور نامزدها را با SNI شما تأیید می‌کند، مرورگر شما از سمت ISP خودتان زمان‌گیری می‌کند) پیدا کنید؛ برای هر IP، کانفیگ جدا ساخته و به سابسکریپشن اضافه می‌شود
+- **تست داخلی و تست از بیرون**: دو دکمه در پنل؛ اولی موتور و خروجی سرور را می‌سنجد، دومی از طریق آدرس عمومی (Cloudflare → Worker → هاست) به خود سرور تونل می‌زند تا کل زنجیره تأیید شود
 - پنل فارسی با رمز، QR برای هر کانفیگ، سابسکریپشن base64 / خام / Clash
 - مسیرهای WebSocket غیرقابل حدس، صفحه‌ی اصلی پوششی، قفل ورود بعد از ۵ تلاش ناموفق
 - Dockerfile، Blueprint برای Render، docker-compose برای VPS، Worker برای کلودفلر
@@ -109,7 +109,7 @@ node src/index.js
 | `CLEAN_IPS` | — | IPهای تمیز اولیه، با کاما |
 | `PANEL_PATH` / `SUB_PATH` | `panel` / `sub` | مسیرها |
 | `CONFIG_NAME` | `V2Gate` | نام کانفیگ‌ها |
-| `ENABLE_VLESS_WS` `ENABLE_TROJAN_WS` `ENABLE_VLESS_HTTPUPGRADE` `ENABLE_TROJAN_HTTPUPGRADE` | `true/true/true/false` | روشن/خاموش کردن هر ترکیب |
+| `ENABLE_VLESS_WS` `ENABLE_TROJAN_WS` `ENABLE_VLESS_HTTPUPGRADE` `ENABLE_TROJAN_HTTPUPGRADE` `ENABLE_VLESS_XHTTP` `ENABLE_TROJAN_XHTTP` | `true/true/true/false/true/false` | روشن/خاموش کردن هر ترکیب |
 | `PATH_VLESS_WS` … | از روی UUID | مسیرهای WS |
 | `DNS_RESOLVER` | `8.8.8.8` | رزولور برای DNS کلاینت (UDP→TCP) |
 | `IDLE_TIMEOUT` | `300` | ثانیه؛ بستن اتصال بی‌کار |
@@ -132,6 +132,7 @@ node src/index.js
 
 - **UDP**: فقط DNS (پورت ۵۳) پشتیبانی می‌شود (به TCP تبدیل و به `DNS_RESOLVER` فرستاده می‌شود). بازی‌ها و تماس‌های صوتی که UDP خالص می‌خواهند کار نمی‌کنند؛ مرور وب، یوتیوب، تلگرام و اینستاگرام مشکلی ندارند.
 - **VMess و Shadowsocks** پیاده نشده‌اند؛ VLESS و Trojan کافی و سبک‌ترند.
+- **XHTTP** فقط در کلاینت‌های مبتنی بر Xray (v2rayNG، v2rayN، V2Box، Streisand) کار می‌کند و در خروجی Clash نمی‌آید.
 - **XTLS/Reality** نیاز به کنترل مستقیم TLS دارند و روی هاست‌های تک‌پورتی PaaS قابل اجرا نیستند.
 
 ## نکات امنیتی
@@ -157,6 +158,8 @@ node src/index.js
 src/index.js     سرور HTTP(S)، پنل، سابسکریپشن، تست داخلی، مسیردهی Upgrade
 src/ws.js        WebSocket سرور/کلاینت (RFC 6455) و HTTPUpgrade — بدون وابستگی
 src/proxy.js     موتور VLESS و Trojan: parse هدر، رله‌ی TCP، DNS برای UDP
+src/xhttp.js     ترنسپورت XHTTP (packet-up / stream-up / stream-one) به‌صورت Duplex
+src/scan.js      یافتن IP تمیز: نمونه‌گیری از محدوده‌های Cloudflare و تأیید با SNI
 src/config.js    متغیرهای محیطی و state ذخیره‌شده (UUID، رمزها، IPهای تمیز)
 src/links.js     ساخت لینک‌های vless:// trojan:// (+ نسخه‌ی هر IP تمیز) و خروجی Clash
 src/panel.js     HTML پنل
