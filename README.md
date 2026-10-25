@@ -69,7 +69,22 @@
 
 ریپو را وصل کنید، Dockerfile تشخیص داده می‌شود، همان متغیرها را ست کنید. دامنه و TLS خودکار تشخیص داده می‌شود (`TLS_MODE=proxy`، پورت عمومی `443`).
 
-## ۴) VPS با Docker
+## ۴) VPS (پیشنهادی وقتی VPS داری) — با Reality
+
+روی VPS با IP مستقیم، علاوه بر همه‌ی کانفیگ‌های بالا، **VLESS + Reality** هم فعال می‌شود: بدون دامنه، بدون گواهی، بدون Cloudflare و IP تمیز. کلیدها را خود اپ می‌سازد.
+
+```bash
+# Ubuntu/Debian، به‌عنوان root — همه‌چیز را نصب و به‌صورت سرویس اجرا می‌کند
+bash <(curl -fsSL https://raw.githubusercontent.com/<شما>/<ریپو>/main/deploy/install.sh) https://github.com/<شما>/<ریپو>.git
+```
+
+- پنل: `https://<IP>:2096/panel` (گواهی خودامضا — هشدار مرورگر را بپذیرید)
+- Reality روی پورت `443` (`REALITY_PORT`)، سایت پوششی `dl.google.com` (`REALITY_DEST`)
+- لاگ: `journalctl -u v2gate -f` · به‌روزرسانی: همان اسکریپت را دوباره اجرا کنید
+- روی Oracle Cloud / AWS پورت‌های `2096` و `443` را در Security List کنسول هم باز کنید
+- `ENABLE_REALITY=auto` (پیش‌فرض): اگر پورت آزاد باشد و روی PaaS نباشید خودکار روشن می‌شود
+
+## ۴ب) VPS با Docker
 
 ```bash
 git clone https://github.com/<شما>/<ریپو>.git && cd <ریپو>
@@ -109,6 +124,7 @@ node src/index.js
 | `CLEAN_IPS` | — | IPهای تمیز اولیه، با کاما |
 | `PANEL_PATH` / `SUB_PATH` | `panel` / `sub` | مسیرها |
 | `CONFIG_NAME` | `V2Gate` | نام کانفیگ‌ها |
+| `ENABLE_REALITY` `REALITY_PORT` `REALITY_DEST` `REALITY_ADDRESS` | `auto` / `443` / `dl.google.com:443` / IP عمومی | VLESS + Reality روی VPS |
 | `ENABLE_VLESS_WS` `ENABLE_TROJAN_WS` `ENABLE_VLESS_HTTPUPGRADE` `ENABLE_TROJAN_HTTPUPGRADE` `ENABLE_VLESS_XHTTP` `ENABLE_TROJAN_XHTTP` | `true/true/true/false/true/false` | روشن/خاموش کردن هر ترکیب |
 | `PATH_VLESS_WS` … | از روی UUID | مسیرهای WS |
 | `DNS_RESOLVER` | `8.8.8.8` | رزولور برای DNS کلاینت (UDP→TCP) |

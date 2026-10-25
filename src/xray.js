@@ -9,11 +9,12 @@
 
 const fs = require('fs');
 const os = require('os');
+const net = require('net');
 const path = require('path');
 const https = require('https');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const zip = require('./zip');
-const { settings, state, paths } = require('./config');
+const { settings, state, paths, updateState } = require('./config');
 
 const BIN_DIR = settings.binDir;
 const XRAY_BIN = path.join(BIN_DIR, process.platform === 'win32' ? 'xray.exe' : 'xray');
@@ -22,7 +23,10 @@ const CONFIG_FILE = path.join(settings.dataDir, 'xray.json');
 const log = (...a) => console.log('[xray]', ...a);
 
 // status.phase: disabled | downloading | starting | running | stopped | failed
-const status = { phase: settings.enable.xray ? 'starting' : 'disabled', pid: null, startedAt: null, error: null, version: null };
+const status = {
+  phase: settings.enable.xray ? 'starting' : 'disabled', pid: null, startedAt: null, error: null, version: null,
+  reality: { active: false, port: null, reason: null },
+};
 
 // ---- download ------------------------------------------------------------------
 function assetName() {
@@ -109,7 +113,61 @@ function inbounds() {
       settings: { method: settings.ssMethod, password: state.ssPassword, network: 'tcp,udp' },
       streamSettings: { network: 'ws', security: 'none', wsSettings: { path: p.ssWs } }, sniffing: sniff } });
   }
+  // Reality is a direct public listener — not routed through the Node server.
+  if (status.reality.active && state.realityPrivateKey) {
+    const sni = realitySni();
+    list.push({ key: 'reality', path: null, port: status.reality.port, direct: true, inbound: {
+      tag: 'vless-reality', listen: '0.0.0.0', port: status.reality.port, protocol: 'vless',
+      settings: { clients: [{ id: state.uuid, flow: 'xtls-rprx-vision', level: 0 }], decryption: 'none' },
+      streamSettings: {
+        network: 'tcp', security: 'reality',
+        realitySettings: { show: false, dest: settings.realityDest, xver: 0, serverNames: [sni], privateKey: state.realityPrivateKey, shortIds: [state.realityShortId, ''] },
+      },
+      sniffing: sniff } });
+  }
   return list;
+}
+
+function realitySni() {
+  return settings.realitySni || settings.realityDest.split(':')[0];
+}
+
+// ---- Reality helpers -------------------------------------------------------------
+function portFree(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once('error', () => resolve(false));
+    s.listen(port, '0.0.0.0', () => s.close(() => resolve(true)));
+  });
+}
+
+function genX25519() {
+  return new Promise((resolve, reject) => {
+    execFile(XRAY_BIN, ['x25519'], { timeout: 10000 }, (err, out) => {
+      if (err) return reject(err);
+      // Xray prints "Private key: …" + "Public key: …" (older) or "PrivateKey: …" + "Password: …" (newer).
+      const priv = /Private ?key:\s*(\S+)/i.exec(out);
+      const pub = /(?:Public ?key|Password):\s*(\S+)/i.exec(out);
+      if (!priv || !pub) return reject(new Error('could not parse x25519 output'));
+      resolve({ privateKey: priv[1], publicKey: pub[1] });
+    });
+  });
+}
+
+async function prepareReality() {
+  status.reality = { active: false, port: null, reason: null };
+  const want = settings.enable.reality;
+  if (want === false) { status.reality.reason = 'disabled'; return; }
+  if (want === 'auto' && settings.onPaaS) { status.reality.reason = 'PaaS host: no direct public port'; return; }
+  let port = settings.realityPort;
+  if (port === settings.port) port = port === 443 ? 8443 : 443;
+  if (!(await portFree(port))) { status.reality.reason = `port ${port} is in use`; return; }
+  if (!state.realityPrivateKey || !state.realityPublicKey) {
+    const keys = await genX25519();
+    updateState({ realityPrivateKey: keys.privateKey, realityPublicKey: keys.publicKey });
+    log('generated Reality key pair');
+  }
+  status.reality = { active: true, port, reason: null };
 }
 
 function buildConfig() {
@@ -129,7 +187,7 @@ function buildConfig() {
 function routes() {
   const map = new Map();
   if (status.phase !== 'running') return map;
-  for (const x of inbounds()) map.set(x.path, x.port);
+  for (const x of inbounds()) if (x.path) map.set(x.path, x.port);
   return map;
 }
 
@@ -149,7 +207,7 @@ function spawnXray() {
   status.pid = child.pid;
   status.startedAt = Date.now();
   status.error = null;
-  log('started pid', child.pid, '·', inbounds().map((x) => `${x.inbound.protocol}/${x.inbound.streamSettings.network}@${x.port}`).join(' '));
+  log('started pid', child.pid, '·', inbounds().map((x) => `${x.inbound.protocol}/${x.inbound.streamSettings.security === 'reality' ? 'reality' : x.inbound.streamSettings.network}@${x.port}`).join(' '));
   child.stdout.on('data', (d) => process.stdout.write('[xray] ' + d));
   child.stderr.on('data', (d) => process.stderr.write('[xray] ' + d));
   child.on('error', (e) => { status.phase = 'failed'; status.error = e.message; log('spawn error', e.message); });
@@ -181,6 +239,7 @@ async function restart() {
   if (status.phase === 'disabled' || status.phase === 'failed' || status.phase === 'downloading') return;
   await stop();
   restarts = 0;
+  try { await prepareReality(); } catch (e) { status.reality.reason = e.message; }
   spawnXray();
 }
 
@@ -202,6 +261,9 @@ async function boot() {
     await ensureBinary();
     status.version = await version();
     log(status.version);
+    try { await prepareReality(); } catch (e) { status.reality.reason = e.message; log('reality not enabled:', e.message); }
+    if (status.reality.active) log(`Reality listening on :${status.reality.port} (sni ${realitySni()})`);
+    else log(`Reality off: ${status.reality.reason}`);
     spawnXray();
   } catch (e) {
     status.phase = 'failed';
@@ -210,4 +272,4 @@ async function boot() {
   }
 }
 
-module.exports = { boot, stop, restart, routes, inbounds, status, XRAY_BIN };
+module.exports = { boot, stop, restart, routes, inbounds, status, realitySni, XRAY_BIN };
