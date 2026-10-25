@@ -21,6 +21,7 @@ const ws = require('./ws');
 const proxy = require('./proxy');
 const scan = require('./scan');
 const xhttp = require('./xhttp');
+const xray = require('./xray');
 const { settings, state, updateState, setPublicOverride, routes, xhttpRoutes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
@@ -275,6 +276,7 @@ function renderDashboard(req, res, notice, sq = '') {
       reqAddr,
       mismatch,
       stats: proxy.stats,
+      xray: xray.status,
       configs,
       cleanIps: state.cleanIps || [],
       subUrl,
@@ -385,9 +387,14 @@ async function handlePanel(req, res, url) {
       return send(res, 200, panel.loginOkPage({ next: p, text: 'خارج شدید.' }), { 'Set-Cookie': sessionCookie(req, '', 0) });
     }
     if (sub === '/rotate') {
-      updateState({ uuid: crypto.randomUUID(), trojanPassword: randomToken(12), subToken: randomToken(16) });
+      updateState({ uuid: crypto.randomUUID(), trojanPassword: randomToken(12), ssPassword: randomToken(12), subToken: randomToken(16) });
       qrCache.clear();
       log('credentials rotated');
+      xray.restart().catch(() => {});
+      return redirect(res, back);
+    }
+    if (sub === '/xray-restart') {
+      await xray.restart();
       return redirect(res, back);
     }
     if (sub === '/usehost') {
@@ -441,22 +448,25 @@ function handleSubscription(req, res, url) {
     return notFound(res);
   }
   const format = url.searchParams.get('format') || 'base64';
+  const filter = links.makeFilter({ only: url.searchParams.get('only'), exclude: url.searchParams.get('exclude') });
   const common = {
-    'Profile-Title': 'base64:' + Buffer.from(settings.configName).toString('base64'),
+    'Profile-Title': /^[\x20-\x7e]+$/.test(settings.configName)
+      ? settings.configName
+      : 'base64:' + Buffer.from(settings.configName).toString('base64'),
     'Profile-Update-Interval': '12',
     'Subscription-Userinfo': 'upload=0; download=0; total=0; expire=0',
   };
   if (format === 'raw') {
-    return send(res, 200, links.subscriptionRaw(), { ...common, 'Content-Type': 'text/plain; charset=utf-8' });
+    return send(res, 200, links.subscriptionRaw(filter), { ...common, 'Content-Type': 'text/plain; charset=utf-8' });
   }
   if (format === 'clash') {
-    return send(res, 200, links.clashYaml(), {
+    return send(res, 200, links.clashYaml(filter), {
       ...common,
       'Content-Type': 'text/yaml; charset=utf-8',
       'Content-Disposition': 'attachment; filename="v2gate.yaml"',
     });
   }
-  return send(res, 200, links.subscriptionBase64(), { ...common, 'Content-Type': 'text/plain; charset=utf-8' });
+  return send(res, 200, links.subscriptionBase64(filter), { ...common, 'Content-Type': 'text/plain; charset=utf-8' });
 }
 
 // ---- HTTP request router -------------------------------------------------------------
@@ -477,7 +487,7 @@ async function onRequest(req, res) {
     if (xhttp.handleRequest(req, res, p, xhttpRoutes(), proxy.handle, (m) => plog(`${clientIp(req)} ${m}`))) return;
 
     // A proxy path hit without an Upgrade header (e.g. a scanner) → plain 404.
-    if (routes().has(p)) return notFound(res);
+    if (routes().has(p) || xray.routes().has(p)) return notFound(res);
 
     if (p === '/') return send(res, 200, panel.decoyPage());
     return notFound(res);
@@ -492,6 +502,8 @@ function onUpgrade(req, socket, head) {
   const pathname = req.url.split('?')[0];
   const route = routes().get(pathname);
   if (!route) {
+    const xrayPort = xray.routes().get(pathname);
+    if (xrayPort) return passThrough(req, socket, head, xrayPort);
     socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
     return;
   }
@@ -503,6 +515,28 @@ function onUpgrade(req, socket, head) {
   if (!stream) return;
   const ip = clientIp(req);
   proxy.handle(stream, route.protocol, (msg) => plog(`${route.protocol}/${route.transport} ${ip} ${msg}`));
+}
+
+// Xray engine: replay the raw upgrade request to the matching loopback inbound
+// and pipe the two sockets; Xray does its own WebSocket/HTTPUpgrade handshake.
+function passThrough(req, socket, head, port) {
+  const upstream = net.connect({ host: '127.0.0.1', port });
+  socket.setNoDelay(true);
+  socket.setTimeout(settings.idleTimeout, () => socket.destroy());
+  upstream.setNoDelay(true);
+  const cleanup = () => { socket.destroy(); upstream.destroy(); };
+  upstream.on('connect', () => {
+    let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+    for (let i = 0; i < req.rawHeaders.length; i += 2) raw += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+    upstream.write(raw + '\r\n');
+    if (head && head.length) upstream.write(head);
+    socket.pipe(upstream);
+    upstream.pipe(socket);
+  });
+  upstream.on('error', cleanup);
+  socket.on('error', cleanup);
+  upstream.on('close', () => socket.destroy());
+  socket.on('close', () => upstream.destroy());
 }
 
 // ---- TLS (self-signed) -----------------------------------------------------------------
@@ -590,10 +624,14 @@ async function main() {
     log(`clients connect to ${settings.host}:${settings.publicPort} ${links.tlsOn() ? 'with' : 'without'} TLS`);
   });
 
+  // Optional Xray engine boots in the background so the panel is up immediately.
+  xray.boot();
+
   const shutdown = (sig) => {
     log(`${sig} received, shutting down`);
     server.close();
-    setTimeout(() => process.exit(0), 500).unref();
+    xray.stop().finally(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));

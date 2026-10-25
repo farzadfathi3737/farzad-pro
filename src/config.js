@@ -108,7 +108,19 @@ const settings = {
     trojanHu: bool('ENABLE_TROJAN_HTTPUPGRADE', false),
     vlessXh: bool('ENABLE_VLESS_XHTTP', true),
     trojanXh: bool('ENABLE_TROJAN_XHTTP', false),
+    // Served by the optional Xray engine (src/xray.js)
+    xray: bool('ENABLE_XRAY', true),
+    vmessWs: bool('ENABLE_VMESS_WS', true),
+    vmessHu: bool('ENABLE_VMESS_HTTPUPGRADE', true),
+    ssWs: bool('ENABLE_SS_WS', true),
   },
+
+  // Xray engine
+  binDir: path.resolve(ROOT, env('BIN_DIR', 'bin')),
+  xrayVersion: env('XRAY_VERSION', 'latest'),
+  xrayBasePort: Number(env('XRAY_BASE_PORT', 10100)),
+  xrayLogLevel: env('XRAY_LOG_LEVEL', 'warning'),
+  ssMethod: env('SS_METHOD', 'aes-128-gcm'),
 
   configName: env('CONFIG_NAME', 'V2Gate'),
 
@@ -199,6 +211,14 @@ function ensureState() {
     changed = true;
   }
 
+  const ssPassword = env('SS_PASSWORD');
+  if (ssPassword) {
+    if (state.ssPassword !== ssPassword) { state.ssPassword = ssPassword; changed = true; }
+  } else if (!state.ssPassword) {
+    state.ssPassword = randomToken(12);
+    changed = true;
+  }
+
   const subToken = env('SUB_TOKEN');
   if (subToken) {
     if (state.subToken !== subToken) { state.subToken = subToken; changed = true; }
@@ -266,6 +286,9 @@ function paths() {
     trojanHu: env('PATH_TROJAN_HU', `/thu-${tag}`),
     vlessXh: env('PATH_VLESS_XHTTP', `/xh-${tag}`),
     trojanXh: env('PATH_TROJAN_XHTTP', `/txh-${tag}`),
+    vmessWs: env('PATH_VMESS_WS', `/vmess-${tag}`),
+    vmessHu: env('PATH_VMESS_HU', `/vmhu-${tag}`),
+    ssWs: env('PATH_SS_WS', `/ss-${tag}`),
   };
 }
 

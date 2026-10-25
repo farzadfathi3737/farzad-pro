@@ -84,7 +84,7 @@ function fmtBytes(n) {
 
 function configCard(c, qrs) {
   return `<div class="card cfg">
-<div class="top"><strong>${esc(c.label)}</strong><span class="badge">${esc(c.protocol)} · ${esc(c.transport)}</span></div>
+<div class="top"><strong>${esc(c.label)}</strong><span class="badge">${esc(c.protocol)} · ${esc(c.transport)}${c.engine === 'xray' ? ' · Xray' : ''}</span></div>
 <img alt="QR" src="${qrs[c.key]}" onclick="showQr(this.src,'${esc(c.label)}')" title="برای بزرگ‌نمایی کلیک کنید">
 <div class="link mono" id="l-${esc(c.key)}">${esc(c.link)}</div>
 <div class="row"><button type="button" class="ghost" onclick="copyText('l-${esc(c.key)}',this)">کپی لینک</button>
@@ -102,7 +102,16 @@ const QR_MODAL = `
 function showQr(src,cap){var m=document.getElementById('qrm');document.getElementById('qrm-img').src=src;document.getElementById('qrm-cap').textContent=cap||'';m.style.display='flex'}
 </script>`;
 
-function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAddr, mismatch, stats, configs, cleanIps, subUrl, uptime, qrs, notice, sq = '' }) {
+function xrayLine(x) {
+  if (!x || x.phase === 'disabled') return '<span class="muted">غیرفعال</span>';
+  if (x.phase === 'running') return `<span class="ok">در حال اجرا</span> <span class="muted mono">${esc(x.version || '')} (pid ${x.pid})</span> <span class="muted">— VMess و Shadowsocks</span>`;
+  if (x.phase === 'downloading') return '<span class="warn">در حال دانلود Xray از GitHub…</span> <span class="muted">(صفحه را بعداً تازه کنید)</span>';
+  if (x.phase === 'starting') return '<span class="warn">در حال راه‌اندازی…</span>';
+  if (x.phase === 'stopped') return '<span class="muted">متوقف</span>';
+  return `<span style="color:var(--err)">در دسترس نیست</span> <span class="muted">${esc(x.error || '')} — کانفیگ‌های بومی (VLESS/Trojan/XHTTP) کار می‌کنند</span>`;
+}
+
+function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAddr, mismatch, stats, xray, configs, cleanIps, subUrl, uptime, qrs, notice, sq = '' }) {
   const act = (name) => `${esc(panelPath)}/${name}${esc(sq)}`;
   const tlsLabel = { proxy: 'TLS (توسط هاست / کلودفلر)', self: 'TLS (گواهی خودامضا)', off: 'بدون TLS' }[tlsMode] || tlsMode;
   const main = configs.filter((c) => !c.isClean);
@@ -141,6 +150,8 @@ ${mismatchBox}
 <div class="card"><div class="kv">
 <b>آدرس سرور</b><span><span class="mono">${esc(host)}:${publicPort}</span>${publicOverride ? ` <span class="badge">تنظیم‌شده از پنل</span> <form method="post" action="${act('clearhost')}" style="display:inline"><button type="submit" class="ghost" style="padding:2px 8px;font-size:12px">پاک کردن</button></form>` : ''}</span>
 <b>حالت TLS</b><span>${esc(tlsLabel)}</span>
+<b>موتور بومی</b><span><span class="ok">فعال</span> <span class="muted">— VLESS · Trojan · XHTTP</span></span>
+<b>موتور Xray</b><span>${xrayLine(xray)}</span>
 <b>اتصال‌های فعال</b><span>${stats.active} <span class="muted">(کل: ${stats.total} · خطا: ${stats.errors})</span></span>
 <b>ترافیک</b><span class="mono">↑ ${fmtBytes(stats.bytesIn)} &nbsp; ↓ ${fmtBytes(stats.bytesOut)}</span>
 <b>مدت اجرا</b><span>${esc(uptime)}</span>
@@ -163,6 +174,14 @@ ${mismatchBox}
 <div class="row" style="margin-top:10px"><button type="button" class="ghost" onclick="copyText('l-sub',this)">کپی لینک</button>
 <a class="btn ghost" href="${esc(subUrl)}?format=clash" download="v2gate.yaml">دانلود Clash</a>
 <a class="btn ghost" href="${esc(subUrl)}?format=raw" target="_blank">متن خام</a></div></div></div>
+
+<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+<div class="top"><strong>سابسکریپشن سازگار</strong><span class="badge">V2Box · Streisand · Shadowrocket · کلاینت‌های قدیمی</span></div>
+<p class="muted" style="margin:6px 0 8px">فقط VLESS و Trojan روی WebSocket — بدون XHTTP، HTTPUpgrade، VMess و Shadowsocks. بعضی کلاینت‌ها اگر حتی یک خطِ ناشناخته ببینند کل سابسکریپشن را رد می‌کنند؛ اگر لینک بالا در برنامه‌ای کار نکرد، این را بدهید.</p>
+<div class="link mono" id="l-sub-compat">${esc(subUrl)}?exclude=compat</div>
+<div class="row" style="margin-top:8px"><button type="button" class="ghost" onclick="copyText('l-sub-compat',this)">کپی لینک سازگار</button>
+<span class="muted">فیلترهای دیگر: <span class="mono">?only=vless,ws</span> · <span class="mono">?exclude=clean</span> · <span class="mono">?only=xhttp</span></span></div>
+</div>
 </div>
 
 <h2 style="margin-top:22px">کانفیگ‌های اصلی</h2>
@@ -242,6 +261,7 @@ ${clean.length ? `<details><summary>نمایش کانفیگ‌های IP تمیز
 <strong>مدیریت</strong>
 <p class="muted" style="margin:6px 0 10px">ریست کردن UUID همه کانفیگ‌ها و لینک سابسکریپشن فعلی را باطل می‌کند و باید دوباره در کلاینت‌ها وارد شوند.</p>
 <div class="row">
+${xray && xray.phase !== 'disabled' ? `<form method="post" action="${act('xray-restart')}"><button class="ghost" type="submit">ری‌استارت Xray</button></form>` : ''}
 <form method="post" action="${act('rotate')}" onsubmit="return confirm('UUID و رمزها بازتولید شوند؟ کانفیگ‌های فعلی از کار می‌افتند.')"><button class="danger" type="submit">ریست UUID و رمزها</button></form>
 </div></div>
 

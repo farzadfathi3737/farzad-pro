@@ -131,7 +131,7 @@ node src/index.js
 ## محدودیت‌های موتور بومی
 
 - **UDP**: فقط DNS (پورت ۵۳) پشتیبانی می‌شود (به TCP تبدیل و به `DNS_RESOLVER` فرستاده می‌شود). بازی‌ها و تماس‌های صوتی که UDP خالص می‌خواهند کار نمی‌کنند؛ مرور وب، یوتیوب، تلگرام و اینستاگرام مشکلی ندارند.
-- **VMess و Shadowsocks** پیاده نشده‌اند؛ VLESS و Trojan کافی و سبک‌ترند.
+- **VMess و Shadowsocks** از طریق موتور اختیاری Xray ارائه می‌شوند (کنار موتور بومی). اگر دانلود Xray روی هاست ممکن نباشد، سرویس بدون آن‌ها بالا می‌آید؛ در Docker باینری در زمان بیلد داخل ایمیج می‌رود.
 - **XHTTP** فقط در کلاینت‌های مبتنی بر Xray (v2rayNG، v2rayN، V2Box، Streisand) کار می‌کند و در خروجی Clash نمی‌آید.
 - **XTLS/Reality** نیاز به کنترل مستقیم TLS دارند و روی هاست‌های تک‌پورتی PaaS قابل اجرا نیستند.
 
@@ -158,6 +158,8 @@ node src/index.js
 src/index.js     سرور HTTP(S)، پنل، سابسکریپشن، تست داخلی، مسیردهی Upgrade
 src/ws.js        WebSocket سرور/کلاینت (RFC 6455) و HTTPUpgrade — بدون وابستگی
 src/proxy.js     موتور VLESS و Trojan: parse هدر، رله‌ی TCP، DNS برای UDP
+src/xray.js      موتور اختیاری Xray: دانلود، کانفیگ، پروسه — VMess-WS/HU و Shadowsocks-WS روی 127.0.0.1
+src/zip.js       استخراج آرشیو Xray بدون وابستگی
 src/xhttp.js     ترنسپورت XHTTP (packet-up / stream-up / stream-one) به‌صورت Duplex
 src/scan.js      یافتن IP تمیز: نمونه‌گیری از محدوده‌های Cloudflare و تأیید با SNI
 src/config.js    متغیرهای محیطی و state ذخیره‌شده (UUID، رمزها، IPهای تمیز)
