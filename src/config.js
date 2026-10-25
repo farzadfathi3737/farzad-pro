@@ -106,6 +106,8 @@ const settings = {
     trojanWs: bool('ENABLE_TROJAN_WS', true),
     vlessHu: bool('ENABLE_VLESS_HTTPUPGRADE', true),
     trojanHu: bool('ENABLE_TROJAN_HTTPUPGRADE', false),
+    vlessXh: bool('ENABLE_VLESS_XHTTP', true),
+    trojanXh: bool('ENABLE_TROJAN_XHTTP', false),
   },
 
   configName: env('CONFIG_NAME', 'V2Gate'),
@@ -262,7 +264,18 @@ function paths() {
     trojanWs: env('PATH_TROJAN_WS', `/trojan-${tag}`),
     vlessHu: env('PATH_VLESS_HU', `/hu-${tag}`),
     trojanHu: env('PATH_TROJAN_HU', `/thu-${tag}`),
+    vlessXh: env('PATH_VLESS_XHTTP', `/xh-${tag}`),
+    trojanXh: env('PATH_TROJAN_XHTTP', `/txh-${tag}`),
   };
+}
+
+// XHTTP is plain HTTP (no Upgrade): Map<basePath, protocol>
+function xhttpRoutes() {
+  const p = paths();
+  const map = new Map();
+  if (settings.enable.vlessXh) map.set(p.vlessXh, 'vless');
+  if (settings.enable.trojanXh) map.set(p.trojanXh, 'trojan');
+  return map;
 }
 
 // Map of URL path → { protocol, transport }
@@ -284,6 +297,7 @@ module.exports = {
   parseHostInput,
   paths,
   routes,
+  xhttpRoutes,
   parseCleanIps,
   sha256,
   hashPassword,

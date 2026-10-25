@@ -32,6 +32,8 @@ function vlessLink({ address, path, network, label }) {
     type: network,
     host: settings.host,
     path,
+    // XHTTP behind a CDN must use packet-up (CDNs buffer streaming request bodies).
+    mode: network === 'xhttp' ? 'packet-up' : undefined,
   };
   return `vless://${state.uuid}@${address}:${settings.publicPort}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
@@ -46,6 +48,7 @@ function trojanLink({ address, path, network, label }) {
     type: network,
     host: settings.host,
     path,
+    mode: network === 'xhttp' ? 'packet-up' : undefined,
   };
   return `trojan://${encodeURIComponent(state.trojanPassword)}@${address}:${settings.publicPort}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
@@ -58,6 +61,8 @@ function kinds() {
   if (settings.enable.trojanWs) out.push({ key: 'trojanWs', protocol: 'Trojan', transport: 'WebSocket', network: 'ws', path: p.trojanWs, build: trojanLink, tag: 'Trojan-WS' });
   if (settings.enable.vlessHu) out.push({ key: 'vlessHu', protocol: 'VLESS', transport: 'HTTPUpgrade', network: 'httpupgrade', path: p.vlessHu, build: vlessLink, tag: 'VLESS-HU' });
   if (settings.enable.trojanHu) out.push({ key: 'trojanHu', protocol: 'Trojan', transport: 'HTTPUpgrade', network: 'httpupgrade', path: p.trojanHu, build: trojanLink, tag: 'Trojan-HU' });
+  if (settings.enable.vlessXh) out.push({ key: 'vlessXh', protocol: 'VLESS', transport: 'XHTTP', network: 'xhttp', path: p.vlessXh, build: vlessLink, tag: 'VLESS-XHTTP' });
+  if (settings.enable.trojanXh) out.push({ key: 'trojanXh', protocol: 'Trojan', transport: 'XHTTP', network: 'xhttp', path: p.trojanXh, build: trojanLink, tag: 'Trojan-XHTTP' });
   return out;
 }
 
@@ -102,6 +107,7 @@ function clashYaml() {
   const tls = tlsOn();
   const proxies = [];
   for (const c of allConfigs()) {
+    if (c.transport === 'XHTTP') continue; // not supported by Clash/mihomo
     const n = name(c.isClean ? `${c.protocol}-${c.transport} ${c.address}` : `${c.protocol}-${c.transport}`);
     const common =
       `    server: ${c.address}\n    port: ${settings.publicPort}\n    udp: false\n` +

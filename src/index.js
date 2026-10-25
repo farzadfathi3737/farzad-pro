@@ -20,7 +20,8 @@ const QR = require('./qr');
 const ws = require('./ws');
 const proxy = require('./proxy');
 const scan = require('./scan');
-const { settings, state, updateState, setPublicOverride, routes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
+const xhttp = require('./xhttp');
+const { settings, state, updateState, setPublicOverride, routes, xhttpRoutes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
 
@@ -465,12 +466,15 @@ async function onRequest(req, res) {
     const p = url.pathname;
 
     if (p === '/health' || p === '/healthz') {
-      return send(res, 200, JSON.stringify({ ok: true, uptime: Date.now() - startedAt, active: proxy.stats.active }), {
+      return send(res, 200, JSON.stringify({ ok: true, uptime: Date.now() - startedAt, active: proxy.stats.active, xhttpSessions: xhttp.sessionCount() }), {
         'Content-Type': 'application/json',
       });
     }
     if (p === settings.panelPath || p.startsWith(settings.panelPath + '/')) return await handlePanel(req, res, url);
     if (p.startsWith(settings.subPath + '/')) return handleSubscription(req, res, url);
+
+    // XHTTP transport (plain HTTP, no Upgrade)
+    if (xhttp.handleRequest(req, res, p, xhttpRoutes(), proxy.handle, (m) => plog(`${clientIp(req)} ${m}`))) return;
 
     // A proxy path hit without an Upgrade header (e.g. a scanner) → plain 404.
     if (routes().has(p)) return notFound(res);
@@ -581,7 +585,8 @@ async function main() {
     const scheme = settings.tlsMode === 'self' ? 'https' : 'http';
     log(`listening on ${scheme}://0.0.0.0:${settings.port}`);
     log(`panel: ${settings.panelPath}   subscription: ${settings.subPath}/<token>`);
-    log(`routes: ${[...routes().entries()].map(([k, v]) => `${k} (${v.protocol}/${v.transport})`).join(', ')}`);
+    log(`routes: ${[...routes().entries()].map(([k, v]) => `${k} (${v.protocol}/${v.transport})`).join(', ')}` +
+      `${xhttpRoutes().size ? ', ' + [...xhttpRoutes().entries()].map(([k, v]) => `${k} (${v}/xhttp)`).join(', ') : ''}`);
     log(`clients connect to ${settings.host}:${settings.publicPort} ${links.tlsOn() ? 'with' : 'without'} TLS`);
   });
 
