@@ -1,0 +1,684 @@
+<title>معماری V2Gate</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a technical spec — RTL Persian prose in a 72ch column, LTR engineering drawings
+   set full-width inside it, each with a numbered caption. Blueprint feel: cool paper, ink lines,
+   one teal for the hop that matters (Cloudflare edge), one amber for the Worker. */
+:root{
+  --bg:#f4f6f8; --paper:#ffffff; --fg:#17212b; --muted:#5c6b7a; --line:#c9d2db; --grid:#e6ebf0;
+  --accent:#0b7c8c; --accent-soft:#d7eef1; --warn:#b86e00; --warn-soft:#fbead0; --ok:#2e7d4f;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"Vazirmatn",system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f151b; --paper:#161e26; --fg:#e4eaf0; --muted:#97a6b5; --line:#2d3a47; --grid:#1f2a35;
+  --accent:#3fb8c8; --accent-soft:#113b42; --warn:#e3a640; --warn-soft:#3a2a0e; --ok:#5cc48a; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0f151b; --paper:#161e26; --fg:#e4eaf0; --muted:#97a6b5; --line:#2d3a47; --grid:#1f2a35;
+  --accent:#3fb8c8; --accent-soft:#113b42; --warn:#e3a640; --warn-soft:#3a2a0e; --ok:#5cc48a; color-scheme:dark }
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.9;font-size:15.5px}
+.wrap{max-width:980px;margin:0 auto;padding-block:36px 72px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));direction:rtl}
+header{border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:28px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;color:var(--accent);text-transform:uppercase;direction:ltr;text-align:right}
+h1{font-size:30px;margin:4px 0 6px;font-weight:700;text-wrap:balance}
+.lead{color:var(--muted);margin:0;max-width:72ch}
+h2{font-size:21px;margin:44px 0 10px;font-weight:700;text-wrap:balance;display:flex;gap:10px;align-items:baseline}
+h2 .n{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:600}
+h3{font-size:16px;margin:26px 0 8px;font-weight:700}
+p{max-width:72ch;margin:8px 0}
+ul,ol{max-width:72ch;padding-right:22px;margin:8px 0}
+li{margin:3px 0}
+code,.mono{font-family:var(--mono);font-size:.9em;direction:ltr;unicode-bidi:isolate}
+code{background:var(--grid);padding:1px 6px;border-radius:4px}
+figure{margin:18px 0 6px;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:14px;direction:ltr;overflow-x:auto}
+figure svg{display:block;max-width:100%;height:auto;min-width:640px;color:var(--fg);font-family:var(--mono);font-size:12px}
+figure svg .fa{font-family:var(--sans)}
+figcaption{direction:rtl;text-align:right;color:var(--muted);font-size:13.5px;margin-top:10px;line-height:1.7}
+figcaption b{color:var(--fg);font-weight:600}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:6px 0 0}
+.legend span::before{content:"";display:inline-block;width:22px;height:0;border-top:2px solid currentColor;vertical-align:middle;margin-left:6px}
+.legend .a{color:var(--accent)} .legend .w{color:var(--warn)} .legend .d::before{border-top-style:dashed}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:12px 0;background:var(--paper);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{padding:8px 12px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}
+th{background:var(--grid);font-weight:600;font-size:13px}
+tr:last-child td{border-bottom:0}
+td code{white-space:nowrap}
+.tablewrap{overflow-x:auto}
+.note{border-right:3px solid var(--accent);background:var(--accent-soft);padding:10px 14px;border-radius:6px;max-width:72ch;margin:14px 0}
+.note.w{border-color:var(--warn);background:var(--warn-soft)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:12px 0}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h4{margin:0 0 6px;font-size:14.5px}
+.card p{font-size:14px;color:var(--muted);margin:0}
+.toc{columns:2;column-gap:28px;font-size:14px;max-width:72ch}
+.toc a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--line)}
+.toc a:hover,.toc a:focus-visible{color:var(--accent);outline:none;border-bottom-color:var(--accent)}
+@media (max-width:600px){.toc{columns:1}h1{font-size:24px}}
+@media (prefers-reduced-motion:no-preference){a{transition:color .15s}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">V2Gate · architecture spec · v1.1</div>
+  <h1>معماری V2Gate</h1>
+  <p class="lead">سرور تک‌پورتی VLESS/Trojan با موتور بومی Node.js، پنل کانفیگ و پشتیبانی از IP تمیز — از مسیر یک بسته در شبکه تا بایت‌های داخل هر فریم. نقشه‌ها با استقرار فعلی شما کشیده شده‌اند: دامنه‌ی <code>rasta1.gostarantablo.com</code> روی Cloudflare Worker، هاست Node در <code>6f75r4.bot-keep.xyz</code>.</p>
+</header>
+
+<nav class="toc">
+  <a href="#e2e">۱ · مسیر کامل یک اتصال</a><br>
+  <a href="#inside">۲ · داخل پروسه‌ی V2Gate</a><br>
+  <a href="#seq">۳ · توالی برقراری یک اتصال</a><br>
+  <a href="#bytes">۴ · ساختار بایت‌ها</a><br>
+  <a href="#config">۵ · تنظیمات، state و اولویت‌ها</a><br>
+  <a href="#links">۶ · تولید کانفیگ و سابسکریپشن</a><br>
+  <a href="#deploy">۷ · استقرار و فایل‌ها</a><br>
+  <a href="#limits">۸ · مرزها و محدودیت‌ها</a>
+</nav>
+
+<!-- ============================================================ 1 -->
+<h2 id="e2e"><span class="n">۱</span> مسیر کامل یک اتصال</h2>
+<p>کلاینت هیچ‌وقت مستقیم به هاست وصل نمی‌شود. TLS را Cloudflare خاتمه می‌دهد، Worker درخواست را به هاست می‌فرستد، هاست TLS دوم را خاتمه می‌دهد و درخواستِ خام HTTP را به پورت داخلی Node تحویل می‌دهد. نقطه‌ی حساس برای فیلترینگ فقط هاپ اول است؛ بقیه‌ی مسیر بیرون از ایران است.</p>
+
+<figure>
+<svg viewBox="0 0 1120 330" role="img" aria-label="مسیر اتصال از کلاینت تا مقصد: کلاینت، ISP، لبه‌ی Cloudflare، Worker، هاست، V2Gate، مقصد">
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+  <marker id="arA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  <marker id="arW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--warn)"/></marker>
+</defs>
+<!-- region bands -->
+<rect x="10" y="20" width="330" height="200" rx="8" fill="var(--grid)" stroke="none"/>
+<text x="20" y="38" fill="var(--muted)" font-size="11">IRAN · شبکه‌ی داخلی</text>
+<rect x="350" y="20" width="400" height="200" rx="8" fill="var(--accent-soft)" stroke="none" opacity=".55"/>
+<text x="360" y="38" fill="var(--accent)" font-size="11">CLOUDFLARE · لبه + Worker</text>
+<rect x="760" y="20" width="350" height="200" rx="8" fill="var(--grid)" stroke="none"/>
+<text x="770" y="38" fill="var(--muted)" font-size="11">HOSTING · 6f75r4.bot-keep.xyz</text>
+
+<!-- boxes y=70..170 -->
+<g stroke="currentColor" fill="var(--paper)" stroke-width="1.4">
+  <rect x="24" y="70" width="140" height="100" rx="8"/>
+  <rect x="194" y="70" width="130" height="100" rx="8" stroke-dasharray="4 3"/>
+  <rect x="364" y="70" width="170" height="100" rx="8" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="564" y="70" width="170" height="100" rx="8" stroke="var(--warn)" stroke-width="2"/>
+  <rect x="774" y="70" width="150" height="100" rx="8"/>
+  <rect x="954" y="70" width="150" height="100" rx="8"/>
+</g>
+<g text-anchor="middle" fill="currentColor">
+  <text x="94" y="96" font-weight="600" class="fa">کلاینت</text>
+  <text x="94" y="116" font-size="11" fill="var(--muted)">v2rayNG · V2Box</text>
+  <text x="94" y="134" font-size="11" fill="var(--muted)">Hiddify · Clash</text>
+  <text x="94" y="156" font-size="10.5">vless:// · trojan://</text>
+
+  <text x="259" y="96" font-weight="600" class="fa">ISP / فیلترینگ</text>
+  <text x="259" y="116" font-size="11" fill="var(--muted)" class="fa">DNS · SNI · IP</text>
+  <text x="259" y="136" font-size="10.5" fill="var(--muted)" class="fa">هاپی که باید</text>
+  <text x="259" y="152" font-size="10.5" fill="var(--muted)" class="fa">از آن رد شد</text>
+
+  <text x="449" y="96" font-weight="600" fill="var(--accent)">Cloudflare Edge</text>
+  <text x="449" y="114" font-size="11">TLS termination</text>
+  <text x="449" y="131" font-size="10.5" fill="var(--muted)">SNI = rasta1.gostarantablo.com</text>
+  <text x="449" y="148" font-size="10.5" fill="var(--muted)" class="fa">آدرس: دامنه یا IP تمیز</text>
+  <text x="449" y="163" font-size="10.5" fill="var(--muted)">:443</text>
+
+  <text x="649" y="96" font-weight="600" fill="var(--warn)">Worker</text>
+  <text x="649" y="114" font-size="10.5">cloudflare-worker.js</text>
+  <text x="649" y="131" font-size="10.5" fill="var(--muted)">url.hostname = ORIGIN</text>
+  <text x="649" y="147" font-size="10.5" fill="var(--muted)">X-Forwarded-Host = دامنه‌ی شما</text>
+  <text x="649" y="163" font-size="10.5" fill="var(--muted)">X-Forwarded-Proto = https</text>
+
+  <text x="849" y="96" font-weight="600" class="fa">پروکسی هاست</text>
+  <text x="849" y="114" font-size="11">TLS :443</text>
+  <text x="849" y="132" font-size="10.5" fill="var(--muted)" class="fa">گواهی هاست</text>
+  <text x="849" y="150" font-size="10.5" fill="var(--muted)">→ 127.0.0.1:44214</text>
+
+  <text x="1029" y="96" font-weight="600">V2Gate</text>
+  <text x="1029" y="114" font-size="11">node src/index.js</text>
+  <text x="1029" y="132" font-size="10.5" fill="var(--muted)">PORT=44214 (plain HTTP)</text>
+  <text x="1029" y="150" font-size="10.5" fill="var(--muted)">TLS_MODE=proxy</text>
+</g>
+
+<!-- arrows between boxes -->
+<g stroke="currentColor" stroke-width="1.5" fill="none">
+  <line x1="164" y1="120" x2="192" y2="120" marker-end="url(#ar)"/>
+  <line x1="324" y1="120" x2="362" y2="120" marker-end="url(#arA)" stroke="var(--accent)"/>
+  <line x1="534" y1="120" x2="562" y2="120" marker-end="url(#arA)" stroke="var(--accent)"/>
+  <line x1="734" y1="120" x2="772" y2="120" marker-end="url(#arW)" stroke="var(--warn)"/>
+  <line x1="924" y1="120" x2="952" y2="120" marker-end="url(#ar)"/>
+</g>
+<!-- arrow labels -->
+<g font-size="10" fill="var(--muted)" text-anchor="middle">
+  <text x="178" y="190">TLS 1.3</text>
+  <text x="343" y="190">TCP 443</text>
+  <text x="548" y="190">HTTP/WS</text>
+  <text x="753" y="190">fetch() https</text>
+  <text x="938" y="190">HTTP :44214</text>
+</g>
+
+<!-- destination -->
+<rect x="954" y="250" width="150" height="56" rx="8" fill="var(--paper)" stroke="currentColor" stroke-width="1.4"/>
+<text x="1029" y="274" text-anchor="middle" font-weight="600" class="fa">مقصد در اینترنت</text>
+<text x="1029" y="292" text-anchor="middle" font-size="10.5" fill="var(--muted)">google.com:443 · tcp</text>
+<line x1="1029" y1="170" x2="1029" y2="248" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="1040" y="214" font-size="10" fill="var(--muted)">net.connect()</text>
+
+<!-- bottom: what the client "thinks" -->
+<rect x="24" y="250" width="700" height="56" rx="8" fill="none" stroke="var(--line)" stroke-dasharray="4 3"/>
+<text x="40" y="272" font-size="11" fill="var(--muted)">client config → address: <tspan fill="var(--accent)" font-weight="600">rasta1.gostarantablo.com</tspan> or <tspan fill="var(--accent)" font-weight="600">clean-IP</tspan> · port 443 · security=tls · sni/host=rasta1.gostarantablo.com</text>
+<text x="40" y="292" font-size="11" fill="var(--muted)">type=ws · path=/vless-&lt;8 hex of uuid&gt; · id=&lt;uuid&gt;  —  the whole proxy stream rides inside one WebSocket</text>
+</svg>
+<figcaption><b>شکل ۱ — مسیر انتها‌به‌انتها.</b> کلاینت فقط لبه‌ی Cloudflare را می‌بیند (دامنه یا IP تمیز، با SNI دامنه‌ی شما). Worker به‌جای نگه داشتن اتصال، درخواست را با <code>fetch()</code> به هاست می‌فرستد و Cloudflare خودش WebSocket را عبور می‌دهد. هاست TLS دوم را باز می‌کند و درخواست خام را به پورت داخلی Node می‌دهد. V2Gate خودش TLS ندارد (<code>TLS_MODE=proxy</code>) و فقط <code>X-Forwarded-Proto</code> را می‌خواند.</figcaption>
+</figure>
+<div class="legend"><span class="a">هاپ TLS سمت کلاینت (جایی که IP تمیز اثر دارد)</span><span class="w">Worker (بازنویسی Host)</span><span class="d">مرز اعتماد</span></div>
+
+<div class="note w">نکته‌ی IP تمیز: کلاینت به IP تمیز وصل می‌شود ولی در TLS Client Hello مقدار SNI و در هدر HTTP مقدار Host همان <code>rasta1.gostarantablo.com</code> است. Cloudflare فقط به این دو نگاه می‌کند، نه به IP مقصد؛ پس هر IP لبه‌ی Cloudflare که از ISP شما باز باشد، کار می‌کند.</div>
+
+<!-- ============================================================ 2 -->
+<h2 id="inside"><span class="n">۲</span> داخل پروسه‌ی V2Gate</h2>
+<p>یک پروسه‌ی Node، یک سرور HTTP روی <code>$PORT</code>. دو رویداد جدا دارد: <code>request</code> برای صفحات (پنل، سابسکریپشن، صفحه‌ی پوششی) و <code>upgrade</code> برای ترافیک پروکسی. مسیر پروکسی هرگز وارد روتر HTTP نمی‌شود و برعکس.</p>
+
+<figure>
+<svg viewBox="0 0 1000 600" role="img" aria-label="ماژول‌های داخل V2Gate: سرور HTTP، روتر صفحات، مسیر upgrade به ws.js و proxy.js، و config.js که state را نگه می‌دارد">
+<!-- server bar -->
+<rect x="20" y="20" width="960" height="54" rx="8" fill="var(--paper)" stroke="currentColor" stroke-width="1.6"/>
+<text x="500" y="42" text-anchor="middle" font-weight="600">http.createServer()  ·  listen 0.0.0.0:$PORT  ·  index.js</text>
+<text x="500" y="60" text-anchor="middle" font-size="10.5" fill="var(--muted)">keepAliveTimeout 65s · requestTimeout 0 · TLS_MODE=self → https.createServer(openssl self-signed)</text>
+
+<!-- two event lanes -->
+<line x1="260" y1="74" x2="260" y2="110" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="268" y="98" font-size="11" fill="var(--muted)">on('request')</text>
+<line x1="740" y1="74" x2="740" y2="110" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+<text x="748" y="98" font-size="11" fill="var(--muted)">on('upgrade')</text>
+
+<!-- left column: HTTP router -->
+<rect x="20" y="112" width="480" height="300" rx="8" fill="none" stroke="var(--line)"/>
+<text x="32" y="132" font-size="11" fill="var(--muted)">HTTP ROUTER — onRequest(req,res)</text>
+
+<g stroke="currentColor" stroke-width="1.2" fill="var(--paper)">
+  <rect x="36" y="146" width="130" height="46" rx="6"/>
+  <rect x="36" y="204" width="130" height="46" rx="6"/>
+  <rect x="36" y="262" width="130" height="46" rx="6"/>
+  <rect x="36" y="320" width="130" height="46" rx="6"/>
+</g>
+<g font-size="11" fill="currentColor">
+  <text x="44" y="165">GET /</text><text x="44" y="182" font-size="10" fill="var(--muted)" class="fa">صفحه‌ی پوششی «It works!»</text>
+  <text x="44" y="223">GET /health</text><text x="44" y="240" font-size="10" fill="var(--muted)">{ok,uptime,active}</text>
+  <text x="44" y="281">/panel/*</text><text x="44" y="298" font-size="10" fill="var(--muted)">handlePanel()</text>
+  <text x="44" y="339">/sub/&lt;token&gt;</text><text x="44" y="356" font-size="10" fill="var(--muted)">handleSubscription()</text>
+</g>
+<text x="44" y="392" font-size="10.5" fill="var(--muted)">any proxy path without Upgrade → 404 · unknown → 404</text>
+
+<!-- panel detail -->
+<g stroke="currentColor" stroke-width="1.2" fill="var(--paper)">
+  <rect x="200" y="146" width="130" height="40" rx="6"/>
+  <rect x="200" y="196" width="130" height="40" rx="6"/>
+  <rect x="200" y="246" width="130" height="40" rx="6"/>
+  <rect x="350" y="146" width="136" height="140" rx="6"/>
+</g>
+<line x1="166" y1="285" x2="198" y2="166" stroke="currentColor" stroke-width="1.1" marker-end="url(#ar)"/>
+<g font-size="10.5" fill="currentColor">
+  <text x="208" y="163">setup (first run)</text><text x="208" y="178" font-size="9.5" fill="var(--muted)">scrypt hash → state</text>
+  <text x="208" y="213">login · 5 fails = 10 min</text><text x="208" y="228" font-size="9.5" fill="var(--muted)">HMAC cookie v2g_sess</text>
+  <text x="208" y="263">POST actions</text><text x="208" y="278" font-size="9.5" fill="var(--muted)">rotate · cleanips · usehost · selftest</text>
+  <text x="418" y="166" text-anchor="middle" font-weight="600">dashboard</text>
+  <text x="418" y="186" text-anchor="middle" font-size="9.5" fill="var(--muted)">panel.js (HTML)</text>
+  <text x="418" y="206" text-anchor="middle" font-size="9.5" fill="var(--muted)">links.allConfigs()</text>
+  <text x="418" y="224" text-anchor="middle" font-size="9.5" fill="var(--muted)">qr.toDataUri() ×N</text>
+  <text x="418" y="242" text-anchor="middle" font-size="9.5" fill="var(--muted)">proxy.stats</text>
+  <text x="418" y="260" text-anchor="middle" font-size="9.5" fill="var(--muted)">mismatch banner</text>
+  <text x="418" y="278" text-anchor="middle" font-size="9.5" fill="var(--muted)">self-test (VLESS client)</text>
+</g>
+<line x1="330" y1="166" x2="348" y2="166" stroke="currentColor" stroke-width="1.1" marker-end="url(#ar)"/>
+<!-- sub detail -->
+<rect x="200" y="320" width="286" height="46" rx="6" fill="var(--paper)" stroke="currentColor" stroke-width="1.2"/>
+<line x1="166" y1="343" x2="198" y2="343" stroke="currentColor" stroke-width="1.1" marker-end="url(#ar)"/>
+<text x="208" y="338" font-size="10.5">timingSafeEqual(token) → ?format=</text>
+<text x="208" y="355" font-size="10" fill="var(--muted)">base64 (default) · raw · clash  +  Profile-Title header</text>
+
+<!-- right column: upgrade path -->
+<rect x="520" y="112" width="460" height="300" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" opacity=".95"/>
+<text x="532" y="132" font-size="11" fill="var(--accent)">PROXY PATH — onUpgrade(req,socket,head)</text>
+
+<g stroke="currentColor" stroke-width="1.2" fill="var(--paper)">
+  <rect x="536" y="146" width="200" height="54" rx="6"/>
+  <rect x="760" y="146" width="206" height="54" rx="6"/>
+  <rect x="536" y="226" width="430" height="60" rx="6"/>
+  <rect x="536" y="312" width="200" height="86" rx="6"/>
+  <rect x="760" y="312" width="206" height="86" rx="6"/>
+</g>
+<g font-size="10.5" fill="currentColor">
+  <text x="546" y="164" font-weight="600">routes().get(path)</text>
+  <text x="546" y="180" font-size="9.5" fill="var(--muted)">/vless-xxxx → {vless, ws}</text>
+  <text x="546" y="193" font-size="9.5" fill="var(--muted)">/hu-xxxx → {vless, httpupgrade} · else 404</text>
+
+  <text x="770" y="164" font-weight="600">ws.js — transport</text>
+  <text x="770" y="180" font-size="9.5" fill="var(--muted)">acceptWebSocket → WebSocketStream (Duplex)</text>
+  <text x="770" y="193" font-size="9.5" fill="var(--muted)">acceptHttpUpgrade → raw socket after 101</text>
+
+  <text x="546" y="245" font-weight="600">proxy.js — handle(stream, protocol)</text>
+  <text x="546" y="261" font-size="9.5" fill="var(--muted)">buffer until header complete (≤8 KB, 10 s) → parseVless | parseTrojan → timingSafeEqual(uuid | sha224)</text>
+  <text x="546" y="276" font-size="9.5" fill="var(--muted)">reject → destroy()  ·  ok → stream.pause() → relay()</text>
+
+  <text x="546" y="331" font-weight="600">relay: cmd=1 TCP</text>
+  <text x="546" y="348" font-size="9.5" fill="var(--muted)">isBlockedHost? (geo-private, .local)</text>
+  <text x="546" y="362" font-size="9.5" fill="var(--muted)">net.connect(host,port) · setNoDelay</text>
+  <text x="546" y="376" font-size="9.5" fill="var(--muted)">on connect: write [0,0] (vless) + payload</text>
+  <text x="546" y="390" font-size="9.5" fill="var(--muted)">pipe both ways with backpressure</text>
+
+  <text x="770" y="331" font-weight="600">relay: cmd=2 UDP → DNS only</text>
+  <text x="770" y="348" font-size="9.5" fill="var(--muted)">port 53 only, else reject</text>
+  <text x="770" y="362" font-size="9.5" fill="var(--muted)">net.connect(DNS_RESOLVER:53)</text>
+  <text x="770" y="376" font-size="9.5" fill="var(--muted)">len-prefixed UDP == DNS-over-TCP</text>
+  <text x="770" y="390" font-size="9.5" fill="var(--muted)">→ relayed byte-for-byte</text>
+</g>
+<g stroke="currentColor" stroke-width="1.1" fill="none">
+  <line x1="736" y1="173" x2="758" y2="173" marker-end="url(#ar)"/>
+  <line x1="863" y1="200" x2="863" y2="224" marker-end="url(#ar)"/>
+  <line x1="636" y1="286" x2="636" y2="310" marker-end="url(#ar)"/>
+  <line x1="863" y1="286" x2="863" y2="310" marker-end="url(#ar)"/>
+</g>
+<text x="650" y="302" font-size="9.5" fill="var(--muted)">stats: active · total · bytesIn/Out · errors</text>
+
+<!-- bottom: config/state -->
+<rect x="20" y="440" width="960" height="140" rx="8" fill="var(--paper)" stroke="currentColor" stroke-width="1.4"/>
+<text x="32" y="460" font-size="11" fill="var(--muted)">CONFIG &amp; STATE — config.js (loaded once, shared by every module)</text>
+<g stroke="var(--line)" fill="var(--grid)">
+  <rect x="36" y="472" width="290" height="94" rx="6"/>
+  <rect x="346" y="472" width="300" height="94" rx="6"/>
+  <rect x="666" y="472" width="300" height="94" rx="6"/>
+</g>
+<g font-size="10.5" fill="currentColor">
+  <text x="46" y="490" font-weight="600">settings (env → derived)</text>
+  <text x="46" y="506" font-size="9.5" fill="var(--muted)">port · host · publicPort · tlsMode · panelPath</text>
+  <text x="46" y="520" font-size="9.5" fill="var(--muted)">subPath · enable{vlessWs,trojanWs,vlessHu,trojanHu}</text>
+  <text x="46" y="534" font-size="9.5" fill="var(--muted)">dnsResolver · idleTimeout · blockPrivate · configName</text>
+  <text x="46" y="548" font-size="9.5" fill="var(--muted)">parseHostInput("https://x/") → host, https→443/proxy</text>
+
+  <text x="356" y="490" font-weight="600">state → data/state.json (0600)</text>
+  <text x="356" y="506" font-size="9.5" fill="var(--muted)">uuid · trojanPassword · subToken · sessionSecret</text>
+  <text x="356" y="520" font-size="9.5" fill="var(--muted)">panelPasswordHash (scrypt, salt:hash)</text>
+  <text x="356" y="534" font-size="9.5" fill="var(--muted)">cleanIps[] · publicOverride{host,port,tls}</text>
+  <text x="356" y="548" font-size="9.5" fill="var(--muted)">env value wins; missing → generated once &amp; persisted</text>
+
+  <text x="676" y="490" font-weight="600">derived</text>
+  <text x="676" y="506" font-size="9.5" fill="var(--muted)">paths(): /vless-{uuid[0:8]} /trojan-… /hu-… /thu-…</text>
+  <text x="676" y="520" font-size="9.5" fill="var(--muted)">routes(): Map&lt;path, {protocol, transport}&gt;</text>
+  <text x="676" y="534" font-size="9.5" fill="var(--muted)">rotate → new uuid → new paths, links, token</text>
+  <text x="676" y="548" font-size="9.5" fill="var(--muted)">(no restart needed: read on every call)</text>
+</g>
+<g stroke="currentColor" stroke-width="1.1" fill="none" stroke-dasharray="3 3">
+  <line x1="260" y1="412" x2="260" y2="438" marker-end="url(#ar)"/>
+  <line x1="750" y1="412" x2="750" y2="438" marker-end="url(#ar)"/>
+</g>
+<text x="268" y="430" font-size="9.5" fill="var(--muted)">reads state/settings</text>
+<text x="758" y="430" font-size="9.5" fill="var(--muted)">reads uuid / trojanHash / routes</text>
+</svg>
+<figcaption><b>شکل ۲ — نقشه‌ی ماژول‌ها.</b> ستون چپ صفحات را سرو می‌کند و فقط با پنل و سابسکریپشن کار دارد. ستون راست (رنگی) مسیر پروکسی است: مسیر URL به یک جفت «پروتکل/ترنسپورت» نگاشت می‌شود، <code>ws.js</code> اتصال را به یک Duplex خام تبدیل می‌کند و <code>proxy.js</code> بی‌خبر از ترنسپورت فقط بایت می‌بیند. هر دو ستون از یک <code>config.js</code> می‌خوانند؛ چون <code>routes()</code> و <code>paths()</code> در هر فراخوانی از روی state ساخته می‌شوند، ریست UUID بدون ری‌استارت اثر می‌کند.</figcaption>
+</figure>
+
+<div class="grid2">
+  <div class="card"><h4>چرا دو ترنسپورت؟</h4><p><b>WebSocket</b> از همه‌ی CDNها و کلاینت‌ها رد می‌شود ولی هر بسته ۲ تا ۱۴ بایت سربار فریم دارد. <b>HTTPUpgrade</b> همان دست‌دادن HTTP را می‌کند و بعد از 101 بایت‌ها خام می‌روند — کمتر سربار، ولی بعضی CDNها آن را نمی‌شناسند. هر دو با یک Upgrade header می‌آیند؛ تفاوت فقط در این است که بعد از 101 فریم‌بندی داریم یا نه.</p></div>
+  <div class="card"><h4>چرا مسیرها از UUID ساخته می‌شوند؟</h4><p>اسکنرها به <code>/ws</code> و <code>/vless</code> درخواست می‌زنند. مسیر <code>/vless-6578858c</code> حدس‌زدنی نیست، و درخواست بدون Upgrade به آن هم مثل هر مسیر دیگری ۴۰۴ می‌گیرد — سرور از بیرون شبیه یک اپ ساده‌ی Node است.</p></div>
+  <div class="card"><h4>احراز هویت پروکسی</h4><p>VLESS با مقایسه‌ی ۱۶ بایت UUID، Trojan با مقایسه‌ی ۵۶ کاراکتر SHA-224 رمز؛ هر دو با <code>timingSafeEqual</code>. اتصالِ رد‌شده بی‌صدا بسته می‌شود (بدون پاسخ متمایز) و در <code>stats.errors</code> شمرده می‌شود.</p></div>
+  <div class="card"><h4>پس‌فشار (backpressure)</h4><p>اگر مقصد کند باشد، <code>stream.pause()</code> تا <code>drain</code>؛ اگر کلاینت کند باشد، <code>target.pause()</code>. WebSocketStream هم با <code>push()</code> برگشتی false سوکت زیرین را pause می‌کند. حافظه با تعداد اتصال رشد نمی‌کند.</p></div>
+</div>
+
+<!-- ============================================================ 3 -->
+<h2 id="seq"><span class="n">۳</span> توالی برقراری یک اتصال</h2>
+<p>یک درخواست کلاینت برای باز کردن <code>example.com:443</code> از طریق VLESS-WS، قدم‌به‌قدم. زمان از بالا به پایین است. دو TLS جدا وجود دارد و فقط اولی را کلاینت می‌بیند.</p>
+
+<figure>
+<svg viewBox="0 0 1000 640" role="img" aria-label="نمودار توالی: کلاینت، Cloudflare و Worker، هاست، V2Gate، مقصد — از TLS تا رله‌ی داده">
+<!-- lifelines -->
+<g font-weight="600" text-anchor="middle" fill="currentColor">
+  <text x="90" y="30" class="fa">کلاینت</text>
+  <text x="300" y="30">Cloudflare + Worker</text>
+  <text x="510" y="30" class="fa">پروکسی هاست</text>
+  <text x="720" y="30">V2Gate</text>
+  <text x="920" y="30" class="fa">مقصد</text>
+</g>
+<g stroke="var(--line)" stroke-dasharray="4 4">
+  <line x1="90" y1="40" x2="90" y2="620"/><line x1="300" y1="40" x2="300" y2="620"/>
+  <line x1="510" y1="40" x2="510" y2="620"/><line x1="720" y1="40" x2="720" y2="620"/><line x1="920" y1="40" x2="920" y2="620"/>
+</g>
+<!-- phases -->
+<g fill="var(--grid)"><rect x="20" y="56" width="960" height="84" rx="6"/><rect x="20" y="150" width="960" height="150" rx="6"/><rect x="20" y="310" width="960" height="150" rx="6"/><rect x="20" y="470" width="960" height="140" rx="6"/></g>
+<g font-size="10" fill="var(--muted)"><text x="28" y="70">① TLS</text><text x="28" y="164">② HTTP Upgrade</text><text x="28" y="324">③ VLESS header</text><text x="28" y="484">④ relay</text></g>
+
+<g stroke="currentColor" stroke-width="1.4" fill="none">
+  <!-- 1 TLS client→CF -->
+  <line x1="90" y1="92" x2="298" y2="92" marker-end="url(#arA)" stroke="var(--accent)"/>
+  <line x1="300" y1="122" x2="90" y2="122" marker-start="url(#arA)" stroke="var(--accent)"/>
+  <!-- 2 upgrade -->
+  <line x1="90" y1="184" x2="298" y2="184" marker-end="url(#ar)"/>
+  <line x1="300" y1="208" x2="508" y2="208" marker-end="url(#arW)" stroke="var(--warn)"/>
+  <line x1="510" y1="230" x2="718" y2="230" marker-end="url(#ar)"/>
+  <line x1="720" y1="272" x2="92" y2="272" marker-end="url(#ar)"/>
+  <!-- 3 vless header -->
+  <line x1="90" y1="346" x2="718" y2="346" marker-end="url(#ar)"/>
+  <line x1="720" y1="398" x2="918" y2="398" marker-end="url(#ar)"/>
+  <line x1="920" y1="420" x2="722" y2="420" marker-end="url(#ar)"/>
+  <line x1="720" y1="444" x2="92" y2="444" marker-end="url(#ar)"/>
+  <!-- 4 relay -->
+  <line x1="90" y1="508" x2="918" y2="508" marker-end="url(#ar)"/>
+  <line x1="920" y1="544" x2="92" y2="544" marker-end="url(#ar)"/>
+  <line x1="90" y1="588" x2="918" y2="588" marker-end="url(#ar)" stroke-dasharray="4 3"/>
+</g>
+<g font-size="10.5" fill="currentColor">
+  <text x="100" y="86">ClientHello · SNI=rasta1.gostarantablo.com · dst=clean-IP or domain · :443</text>
+  <text x="100" y="118">ServerHello · Cloudflare cert for your domain (valid, no allowInsecure)</text>
+
+  <text x="100" y="178">GET /vless-6578858c HTTP/1.1 · Host: rasta1… · Upgrade: websocket · Sec-WebSocket-Key</text>
+  <text x="308" y="202">Worker: fetch(https://6f75r4.bot-keep.xyz/vless-…) + X-Forwarded-Host/Proto</text>
+  <text x="518" y="224">plain HTTP → 127.0.0.1:44214 (same headers)</text>
+  <text x="100" y="266">HTTP/1.1 101 Switching Protocols · Sec-WebSocket-Accept = b64(sha1(key+GUID))   ← ws.js</text>
+  <text x="100" y="290" font-size="9.5" fill="var(--muted)">from here on: one WebSocket, binary frames, masked client→server</text>
+
+  <text x="100" y="340">frame#1 payload: [00][uuid×16][00][01][01 BB][02][0B "example.com"] + first TLS bytes of the inner connection</text>
+  <text x="100" y="364" font-size="9.5" fill="var(--muted)">proxy.js: parseVless → uuid ok · cmd=TCP · port=443 · atyp=domain → isBlockedHost? no → pause stream</text>
+  <text x="728" y="392">net.connect("example.com", 443)</text>
+  <text x="730" y="436">connected</text>
+  <text x="100" y="438">frame: [00][00]  (VLESS response: version 0, no addons) — then payload is written to target</text>
+
+  <text x="100" y="502">frames → unmask → target.write()           (client ⇄ example.com TLS runs end-to-end inside; V2Gate can't read it)</text>
+  <text x="100" y="538">target data → encodeFrame(0x2) → socket.write()  · backpressure both ways</text>
+  <text x="100" y="582">close frame (0x8) or FIN → both sockets destroyed · stats.active−−  · idle &gt; IDLE_TIMEOUT (300 s) → destroy</text>
+</g>
+</svg>
+<figcaption><b>شکل ۳ — توالی.</b> فقط اولین فریم WebSocket، هدر VLESS را دارد؛ بعد از پاسخ دو‌بایتی <code>[0,0]</code> همه‌چیز بایت خام است. اتصال داخلی (مثلاً TLS کلاینت با example.com) انتها‌به‌انتها رمز است و سرور فقط آن را جابه‌جا می‌کند. Worker در این توالی هیچ حالتی نگه نمی‌دارد: Cloudflare خودش جفت سوکت را بعد از 101 به هم وصل می‌کند.</figcaption>
+</figure>
+
+<!-- ============================================================ 4 -->
+<h2 id="bytes"><span class="n">۴</span> ساختار بایت‌ها</h2>
+<p>سه لایه‌ی فریم‌بندی روی هم سوارند: فریم WebSocket (ترنسپورت)، هدر پروتکل (یک‌بار در ابتدای اتصال)، و payload. <code>proxy.js</code> فقط دومی و سومی را می‌بیند.</p>
+
+<figure>
+<svg viewBox="0 0 1000 100" role="img" aria-label="ساختار فریم WebSocket: FIN و opcode، mask bit و length، طول توسعه‌یافته، کلید mask، payload">
+<text x="0" y="14" font-size="11" fill="var(--muted)">WebSocket frame (RFC 6455) — client→server frames MUST be masked; server→client never</text>
+<g stroke="currentColor" stroke-width="1.2">
+  <rect x="0" y="26" width="90" height="44" fill="var(--paper)"/>
+  <rect x="90" y="26" width="110" height="44" fill="var(--paper)"/>
+  <rect x="200" y="26" width="200" height="44" fill="var(--paper)" stroke-dasharray="4 3"/>
+  <rect x="400" y="26" width="130" height="44" fill="var(--paper)" stroke-dasharray="4 3"/>
+  <rect x="530" y="26" width="470" height="44" fill="var(--accent-soft)"/>
+</g>
+<g font-size="10.5" text-anchor="middle" fill="currentColor">
+  <text x="45" y="44">FIN·RSV·opcode</text><text x="45" y="60" font-size="9.5" fill="var(--muted)">1 byte · 0x82 = binary</text>
+  <text x="145" y="44">MASK · len7</text><text x="145" y="60" font-size="9.5" fill="var(--muted)">1 byte · 126/127 = ext</text>
+  <text x="300" y="44">extended length</text><text x="300" y="60" font-size="9.5" fill="var(--muted)">0 / 2 / 8 bytes (BE)</text>
+  <text x="465" y="44">masking key</text><text x="465" y="60" font-size="9.5" fill="var(--muted)">4 bytes if MASK</text>
+  <text x="765" y="44" font-weight="600">payload (XOR key[i&amp;3] if masked)</text><text x="765" y="60" font-size="9.5" fill="var(--muted)">→ handed to proxy.js as bytes · opcodes 8/9/10 handled in ws.js</text>
+</g>
+<text x="0" y="92" font-size="10" fill="var(--muted)">ws.js caps a single frame at 64 MiB · fragments (opcode 0) are re-assembled before push() · ping→pong automatic · close echoes the 2-byte code</text>
+</svg>
+<figcaption><b>شکل ۴a — فریم WebSocket.</b> کلاینت هر فریم را با یک کلید ۴ بایتی XOR می‌کند؛ <code>ws.js</code> آن را برمی‌گرداند و فقط payload را بالا می‌فرستد. برای HTTPUpgrade این لایه اصلاً وجود ندارد.</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 1000 120" role="img" aria-label="ساختار هدر درخواست VLESS: نسخه، UUID، طول addons، فرمان، پورت، نوع آدرس، آدرس، payload؛ و پاسخ دو بایتی">
+<text x="0" y="14" font-size="11" fill="var(--muted)">VLESS request (first bytes of the stream) — parseVless()</text>
+<g stroke="currentColor" stroke-width="1.2">
+  <rect x="0" y="26" width="50" height="44" fill="var(--paper)"/>
+  <rect x="50" y="26" width="220" height="44" fill="var(--warn-soft)"/>
+  <rect x="270" y="26" width="70" height="44" fill="var(--paper)"/>
+  <rect x="340" y="26" width="60" height="44" fill="var(--paper)"/>
+  <rect x="400" y="26" width="70" height="44" fill="var(--paper)"/>
+  <rect x="470" y="26" width="60" height="44" fill="var(--paper)"/>
+  <rect x="530" y="26" width="180" height="44" fill="var(--paper)"/>
+  <rect x="710" y="26" width="290" height="44" fill="var(--accent-soft)"/>
+</g>
+<g font-size="10.5" text-anchor="middle" fill="currentColor">
+  <text x="25" y="44">ver</text><text x="25" y="60" font-size="9.5" fill="var(--muted)">00</text>
+  <text x="160" y="44" font-weight="600">UUID — 16 bytes</text><text x="160" y="60" font-size="9.5" fill="var(--muted)">timingSafeEqual(state.uuid) · auth</text>
+  <text x="305" y="44">addons len</text><text x="305" y="60" font-size="9.5" fill="var(--muted)">1 (+n skipped)</text>
+  <text x="370" y="44">cmd</text><text x="370" y="60" font-size="9.5" fill="var(--muted)">1 tcp · 2 udp</text>
+  <text x="435" y="44">port</text><text x="435" y="60" font-size="9.5" fill="var(--muted)">2 bytes BE</text>
+  <text x="500" y="44">atyp</text><text x="500" y="60" font-size="9.5" fill="var(--muted)">1 v4 · 2 dom · 3 v6</text>
+  <text x="620" y="44">address</text><text x="620" y="60" font-size="9.5" fill="var(--muted)">4 · [len]+domain · 16</text>
+  <text x="855" y="44" font-weight="600">payload → target</text><text x="855" y="60" font-size="9.5" fill="var(--muted)">rest of frame#1, then raw stream</text>
+</g>
+<rect x="0" y="84" width="60" height="26" fill="var(--paper)" stroke="currentColor" stroke-width="1.2"/>
+<text x="30" y="101" text-anchor="middle" font-size="10.5">00 00</text>
+<text x="70" y="101" font-size="10.5" fill="var(--muted)">← VLESS response, written once the target socket connects: version 0, addons length 0. Then target bytes follow directly.</text>
+</svg>
+<figcaption><b>شکل ۴b — هدر VLESS.</b> هدر فقط یک‌بار می‌آید. UDP (cmd=2) فقط برای پورت ۵۳ پذیرفته می‌شود و payload آن ۲ بایت طول + بسته است — دقیقاً فرمت DNS-over-TCP، پس بدون تغییر به رزولور TCP رله می‌شود.</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 1000 80" role="img" aria-label="ساختار هدر Trojan: ۵۶ کاراکتر هش SHA-224 رمز، CRLF، فرمان، نوع آدرس، آدرس، پورت، CRLF، payload">
+<text x="0" y="14" font-size="11" fill="var(--muted)">Trojan request — parseTrojan() · no response header at all</text>
+<g stroke="currentColor" stroke-width="1.2">
+  <rect x="0" y="26" width="260" height="44" fill="var(--warn-soft)"/>
+  <rect x="260" y="26" width="50" height="44" fill="var(--paper)"/>
+  <rect x="310" y="26" width="60" height="44" fill="var(--paper)"/>
+  <rect x="370" y="26" width="60" height="44" fill="var(--paper)"/>
+  <rect x="430" y="26" width="170" height="44" fill="var(--paper)"/>
+  <rect x="600" y="26" width="60" height="44" fill="var(--paper)"/>
+  <rect x="660" y="26" width="50" height="44" fill="var(--paper)"/>
+  <rect x="710" y="26" width="290" height="44" fill="var(--accent-soft)"/>
+</g>
+<g font-size="10.5" text-anchor="middle" fill="currentColor">
+  <text x="130" y="44" font-weight="600">hex(SHA-224(password)) — 56 bytes</text><text x="130" y="60" font-size="9.5" fill="var(--muted)">timingSafeEqual · auth</text>
+  <text x="285" y="44">CR LF</text>
+  <text x="340" y="44">cmd</text><text x="340" y="60" font-size="9.5" fill="var(--muted)">1 · 3=udp</text>
+  <text x="400" y="44">atyp</text><text x="400" y="60" font-size="9.5" fill="var(--muted)">1 · 3 · 4</text>
+  <text x="515" y="44">address</text><text x="515" y="60" font-size="9.5" fill="var(--muted)">4 · [len]+dom · 16</text>
+  <text x="630" y="44">port</text><text x="630" y="60" font-size="9.5" fill="var(--muted)">2 BE</text>
+  <text x="685" y="44">CR LF</text>
+  <text x="855" y="44" font-weight="600">payload → target</text>
+</g>
+</svg>
+<figcaption><b>شکل ۴c — هدر Trojan.</b> فرق عملی با VLESS: احراز هویت با هش رمز به‌جای UUID، ترتیب پورت بعد از آدرس، و نبود پاسخ؛ اولین بایت‌هایی که کلاینت می‌گیرد مستقیماً از مقصد است.</figcaption>
+</figure>
+
+<!-- ============================================================ 5 -->
+<h2 id="config"><span class="n">۵</span> تنظیمات، state و اولویت‌ها</h2>
+<p>سه منبع تنظیم وجود دارد و ترتیب غلبه‌شان بیشتر اشکال‌های استقرار را توضیح می‌دهد. مقدارهایی که در هیچ‌کدام نباشند یک‌بار تولید و در <code>data/state.json</code> ذخیره می‌شوند؛ اگر دیسک هاست پایدار نباشد، با هر دیپلوی عوض می‌شوند.</p>
+
+<figure>
+<svg viewBox="0 0 1000 300" role="img" aria-label="اولویت تنظیمات آدرس عمومی: تنظیم از پنل بالاتر از env، env بالاتر از تشخیص خودکار PaaS، و در نهایت مقدار تولیدشده">
+<g stroke="currentColor" stroke-width="1.3" fill="var(--paper)">
+  <rect x="20" y="30" width="220" height="110" rx="8" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="270" y="30" width="220" height="110" rx="8"/>
+  <rect x="520" y="30" width="220" height="110" rx="8"/>
+  <rect x="770" y="30" width="210" height="110" rx="8" stroke-dasharray="4 3"/>
+</g>
+<g font-size="10.5" fill="currentColor">
+  <text x="30" y="50" font-weight="600" fill="var(--accent)">1 · panel override</text>
+  <text x="30" y="68" font-size="9.5" fill="var(--muted)">state.publicOverride</text>
+  <text x="30" y="84" font-size="9.5" fill="var(--muted)">{host, port, tls}</text>
+  <text x="30" y="100" font-size="9.5" fill="var(--muted)">set by «استفاده از آدرس …»</text>
+  <text x="30" y="116" font-size="9.5" fill="var(--muted)">from Host / X-Forwarded-Host</text>
+  <text x="30" y="132" font-size="9.5" fill="var(--muted)">cleared by «پاک کردن»</text>
+
+  <text x="280" y="50" font-weight="600">2 · environment</text>
+  <text x="280" y="68" font-size="9.5" fill="var(--muted)">HOST (any form: https://x/ · x:8443)</text>
+  <text x="280" y="84" font-size="9.5" fill="var(--muted)">PUBLIC_PORT · TLS_MODE</text>
+  <text x="280" y="100" font-size="9.5" fill="var(--muted)">UUID · TROJAN_PASSWORD · SUB_TOKEN</text>
+  <text x="280" y="116" font-size="9.5" fill="var(--muted)">PANEL_PASSWORD · CLEAN_IPS · PORT</text>
+  <text x="280" y="132" font-size="9.5" fill="var(--muted)">https:// in HOST ⇒ tls=proxy, port 443</text>
+
+  <text x="530" y="50" font-weight="600">3 · auto-detect</text>
+  <text x="530" y="68" font-size="9.5" fill="var(--muted)">RENDER_EXTERNAL_HOSTNAME</text>
+  <text x="530" y="84" font-size="9.5" fill="var(--muted)">RAILWAY_PUBLIC_DOMAIN · KOYEB_PUBLIC_DOMAIN</text>
+  <text x="530" y="100" font-size="9.5" fill="var(--muted)">FLY_APP_NAME → *.fly.dev</text>
+  <text x="530" y="116" font-size="9.5" fill="var(--muted)">any ⇒ tls=proxy, publicPort=443</text>
+  <text x="530" y="132" font-size="9.5" fill="var(--muted)">else: public IP via ipify, tls=off, port=$PORT</text>
+
+  <text x="780" y="50" font-weight="600">4 · generated once</text>
+  <text x="780" y="68" font-size="9.5" fill="var(--muted)">uuid = randomUUID()</text>
+  <text x="780" y="84" font-size="9.5" fill="var(--muted)">trojanPassword = 12 B base64url</text>
+  <text x="780" y="100" font-size="9.5" fill="var(--muted)">subToken = 16 B · sessionSecret = 32 B</text>
+  <text x="780" y="116" font-size="9.5" fill="var(--muted)">persisted to data/state.json</text>
+  <text x="780" y="132" font-size="9.5" fill="var(--muted)">ephemeral disk ⇒ changes per deploy!</text>
+</g>
+<g stroke="currentColor" stroke-width="1.4" fill="none">
+  <line x1="240" y1="85" x2="268" y2="85" marker-end="url(#ar)"/><line x1="490" y1="85" x2="518" y2="85" marker-end="url(#ar)"/><line x1="740" y1="85" x2="768" y2="85" marker-end="url(#ar)"/>
+</g>
+<text x="500" y="170" text-anchor="middle" font-size="11" fill="var(--muted)">wins ⟵ ———————————————— falls through when unset ————————————————⟶</text>
+
+<!-- where each value is used -->
+<g font-size="10.5" fill="currentColor">
+  <text x="20" y="206" font-weight="600">host · publicPort · tlsMode</text>
+  <text x="20" y="224" font-size="9.5" fill="var(--muted)">→ links.js: address, sni, host header, security=tls, allowInsecure (self only)</text>
+  <text x="20" y="240" font-size="9.5" fill="var(--muted)">→ index.js baseUrl(): subscription URL shown in the panel</text>
+  <text x="20" y="256" font-size="9.5" fill="var(--muted)">→ mismatch banner: compares with the request's own Host/X-Forwarded-Host</text>
+  <text x="520" y="206" font-weight="600">uuid · trojanPassword</text>
+  <text x="520" y="224" font-size="9.5" fill="var(--muted)">→ proxy.js auth · paths() /vless-{uuid[0:8]} · links · QR</text>
+  <text x="520" y="240" font-weight="600">subToken · sessionSecret · panelPasswordHash</text>
+  <text x="520" y="258" font-size="9.5" fill="var(--muted)">→ /sub/&lt;token&gt; · HMAC cookie (7 d) · login (scrypt N=16384)</text>
+  <text x="20" y="284" font-size="9.5" fill="var(--muted)">TLS_MODE=self is never overridden by the panel: it is a server mode (https.createServer) and needs a restart.</text>
+</g>
+</svg>
+<figcaption><b>شکل ۵ — اولویت تنظیم آدرس عمومی.</b> در استقرار فعلی شما منبع ۲ فعال است: <code>HOST=https://rasta1.gostarantablo.com/</code> که به <code>host=rasta1.gostarantablo.com · tlsMode=proxy · publicPort=443</code> ترجمه می‌شود. منبع ۱ برای وقتی است که دسترسی به env نداری یا هاست خودش متغیر غلط می‌دهد.</figcaption>
+</figure>
+
+<!-- ============================================================ 6 -->
+<h2 id="links"><span class="n">۶</span> تولید کانفیگ و سابسکریپشن</h2>
+<p>کانفیگ‌ها ذخیره نمی‌شوند؛ هر بار از روی state ساخته می‌شوند. تعداد خروجی = (پروتکل‌های فعال) × (۱ + تعداد IP تمیز). همه در یک سابسکریپشن می‌روند تا کلاینت خودش بهترین را با URL-test انتخاب کند.</p>
+
+<figure>
+<svg viewBox="0 0 1000 300" role="img" aria-label="تولید لینک‌ها: ترکیب‌های پروتکل و ترنسپورت در آدرس اصلی و IPهای تمیز، سپس خروجی‌های سابسکریپشن base64، raw، clash و QR">
+<g stroke="currentColor" stroke-width="1.3" fill="var(--paper)">
+  <rect x="20" y="30" width="200" height="120" rx="8"/>
+  <rect x="20" y="170" width="200" height="100" rx="8" stroke="var(--accent)" stroke-width="2"/>
+  <rect x="300" y="30" width="260" height="240" rx="8"/>
+  <rect x="640" y="30" width="340" height="60" rx="8"/>
+  <rect x="640" y="110" width="340" height="60" rx="8"/>
+  <rect x="640" y="190" width="340" height="80" rx="8"/>
+</g>
+<g font-size="10.5" fill="currentColor">
+  <text x="30" y="50" font-weight="600">kinds() — enabled combos</text>
+  <text x="30" y="70" font-size="9.5" fill="var(--muted)">VLESS · ws        /vless-xxxxxxxx</text>
+  <text x="30" y="86" font-size="9.5" fill="var(--muted)">Trojan · ws       /trojan-xxxxxxxx</text>
+  <text x="30" y="102" font-size="9.5" fill="var(--muted)">VLESS · httpupgrade  /hu-xxxxxxxx</text>
+  <text x="30" y="118" font-size="9.5" fill="var(--muted)">Trojan · httpupgrade /thu-xxxxxxxx (off)</text>
+  <text x="30" y="138" font-size="9.5" fill="var(--muted)">ENABLE_* toggles</text>
+
+  <text x="30" y="190" font-weight="600" fill="var(--accent)">addresses</text>
+  <text x="30" y="208" font-size="9.5" fill="var(--muted)">settings.host (main)</text>
+  <text x="30" y="224" font-size="9.5" fill="var(--muted)">+ state.cleanIps[] (≤50)</text>
+  <text x="30" y="240" font-size="9.5" fill="var(--muted)">sni/host stay = settings.host</text>
+  <text x="30" y="256" font-size="9.5" fill="var(--muted)">only address differs</text>
+
+  <text x="310" y="50" font-weight="600">allConfigs() = kinds × addresses</text>
+  <text x="310" y="72" font-size="9.5">vless://{uuid}@{addr}:{port}?</text>
+  <text x="310" y="86" font-size="9.5" fill="var(--muted)">  encryption=none&amp;security=tls&amp;sni={host}</text>
+  <text x="310" y="100" font-size="9.5" fill="var(--muted)">  &amp;fp=chrome&amp;type=ws&amp;host={host}&amp;path=%2F…</text>
+  <text x="310" y="114" font-size="9.5" fill="var(--muted)">  #V2Gate VLESS-WS-TLS  |  #V2Gate VLESS-WS 162.159.x.x</text>
+  <text x="310" y="140" font-size="9.5">trojan://{password}@{addr}:{port}?</text>
+  <text x="310" y="154" font-size="9.5" fill="var(--muted)">  security=tls&amp;sni={host}&amp;type=ws&amp;host={host}&amp;path=…</text>
+  <text x="310" y="180" font-size="9.5" fill="var(--muted)">tlsMode=self ⇒ +allowInsecure=1</text>
+  <text x="310" y="194" font-size="9.5" fill="var(--muted)">tlsMode=off  ⇒ security=none, no sni</text>
+  <text x="310" y="220" font-size="9.5" fill="var(--muted)">example: 3 kinds × (1 + 2 clean IPs) = 9 configs</text>
+  <text x="310" y="246" font-size="9.5" fill="var(--muted)">main entries first, then per clean IP</text>
+
+  <text x="650" y="50" font-weight="600">/sub/{token}            → base64(lines)</text>
+  <text x="650" y="70" font-size="9.5" fill="var(--muted)">v2rayNG · V2Box · Hiddify · Streisand · NekoBox · headers: Profile-Title, Update-Interval</text>
+  <text x="650" y="130" font-weight="600">/sub/{token}?format=raw  → plain lines</text>
+  <text x="650" y="150" font-size="9.5" fill="var(--muted)">debugging in a browser · copy single links</text>
+  <text x="650" y="210" font-weight="600">/sub/{token}?format=clash → YAML</text>
+  <text x="650" y="230" font-size="9.5" fill="var(--muted)">proxies (vless/trojan, ws-opts) + url-test group</text>
+  <text x="650" y="246" font-size="9.5" fill="var(--muted)">+ panel: qr.js → SVG data URI per link (byte mode, EC-M, auto version 1–40)</text>
+</g>
+<g stroke="currentColor" stroke-width="1.4" fill="none">
+  <line x1="220" y1="90" x2="298" y2="120" marker-end="url(#ar)"/>
+  <line x1="220" y1="220" x2="298" y2="180" marker-end="url(#arA)" stroke="var(--accent)"/>
+  <line x1="560" y1="60" x2="638" y2="60" marker-end="url(#ar)"/>
+  <line x1="560" y1="140" x2="638" y2="140" marker-end="url(#ar)"/>
+  <line x1="560" y1="220" x2="638" y2="220" marker-end="url(#ar)"/>
+</g>
+</svg>
+<figcaption><b>شکل ۶ — از state تا سابسکریپشن.</b> IP تمیز فقط فیلد آدرس را عوض می‌کند؛ SNI و Host ثابت می‌مانند تا Cloudflare درخواست را به سایت شما برساند. QRها در سرور و بدون کتابخانه ساخته می‌شوند (رمزگذار اختصاصی، روی هر ۴۰ نسخه با OpenCV اعتبارسنجی شده).</figcaption>
+</figure>
+
+<!-- ============================================================ 7 -->
+<h2 id="deploy"><span class="n">۷</span> استقرار و فایل‌ها</h2>
+
+<figure>
+<svg viewBox="0 0 1000 250" role="img" aria-label="جریان استقرار: ریپوی GitHub به هاست Node و به Cloudflare Worker، و متغیرهای محیطی">
+<g stroke="currentColor" stroke-width="1.3" fill="var(--paper)">
+  <rect x="20" y="30" width="200" height="110" rx="8"/>
+  <rect x="300" y="30" width="300" height="110" rx="8"/>
+  <rect x="680" y="30" width="300" height="110" rx="8" stroke="var(--warn)" stroke-width="2"/>
+  <rect x="300" y="170" width="300" height="60" rx="8" stroke-dasharray="4 3"/>
+</g>
+<g font-size="10.5" fill="currentColor">
+  <text x="30" y="50" font-weight="600">GitHub repo</text>
+  <text x="30" y="70" font-size="9.5" fill="var(--muted)">src/ · package.json (0 deps)</text>
+  <text x="30" y="86" font-size="9.5" fill="var(--muted)">Dockerfile · render.yaml · fly.toml</text>
+  <text x="30" y="102" font-size="9.5" fill="var(--muted)">docker-compose.yml</text>
+  <text x="30" y="118" font-size="9.5" fill="var(--muted)">.github/workflows/docker.yml → GHCR</text>
+  <text x="30" y="134" font-size="9.5" fill="var(--muted)">cloudflare-worker.js</text>
+
+  <text x="310" y="50" font-weight="600">Node host (Pterodactyl-style)</text>
+  <text x="310" y="70" font-size="9.5" fill="var(--muted)">git pull · node src/index.js · SERVER_PORT=44214</text>
+  <text x="310" y="86" font-size="9.5" fill="var(--muted)">host proxy: https://6f75r4.bot-keep.xyz → :44214</text>
+  <text x="310" y="102" font-size="9.5" fill="var(--muted)">env: HOST=https://rasta1.gostarantablo.com/</text>
+  <text x="310" y="118" font-size="9.5" fill="var(--muted)">     PANEL_PASSWORD · UUID · TROJAN_PASSWORD · SUB_TOKEN</text>
+  <text x="310" y="134" font-size="9.5" fill="var(--muted)">alt: Render/Koyeb/Fly build the Dockerfile</text>
+
+  <text x="690" y="50" font-weight="600" fill="var(--warn)">Cloudflare Worker</text>
+  <text x="690" y="70" font-size="9.5" fill="var(--muted)">paste cloudflare-worker.js · Deploy</text>
+  <text x="690" y="86" font-size="9.5" fill="var(--muted)">var ORIGIN = 6f75r4.bot-keep.xyz</text>
+  <text x="690" y="102" font-size="9.5" fill="var(--muted)">Custom Domain: rasta1.gostarantablo.com</text>
+  <text x="690" y="118" font-size="9.5" fill="var(--muted)">(zone on Cloudflare, SSL mode Full)</text>
+  <text x="690" y="134" font-size="9.5" fill="var(--muted)">free plan: 100k req/day · WS passes through</text>
+
+  <text x="310" y="190" font-weight="600">data/ (runtime, git-ignored)</text>
+  <text x="310" y="208" font-size="9.5" fill="var(--muted)">state.json · cert.pem/key.pem (self mode only)</text>
+  <text x="310" y="222" font-size="9.5" fill="var(--muted)">volume on Docker: /app/data</text>
+</g>
+<g stroke="currentColor" stroke-width="1.4" fill="none">
+  <line x1="220" y1="70" x2="298" y2="70" marker-end="url(#ar)"/>
+  <line x1="220" y1="120" x2="678" y2="120" marker-end="url(#arW)" stroke="var(--warn)" stroke-dasharray="4 3"/>
+  <line x1="600" y1="85" x2="678" y2="85" marker-start="url(#arW)" stroke="var(--warn)"/>
+  <line x1="450" y1="140" x2="450" y2="168" marker-end="url(#ar)"/>
+</g>
+<text x="230" y="64" font-size="9.5" fill="var(--muted)">push → pull</text>
+<text x="400" y="112" font-size="9.5" fill="var(--warn)">manual paste (one file)</text>
+<text x="610" y="78" font-size="9.5" fill="var(--muted)">fetch(ORIGIN)</text>
+</svg>
+<figcaption><b>شکل ۷ — استقرار.</b> کد از GitHub به هاست می‌رود (pull یا build)؛ Worker یک فایل است که دستی در داشبورد Cloudflare چسبانده می‌شود و فقط یک متغیر دارد. هیچ وابستگی npm نصب نمی‌شود، هیچ باینری دانلود نمی‌شود.</figcaption>
+</figure>
+
+<h3>نقشه‌ی فایل‌ها</h3>
+<div class="tablewrap"><table>
+<tr><th>فایل</th><th>مسئولیت</th><th>وابسته به</th></tr>
+<tr><td><code>src/index.js</code></td><td>سرور HTTP(S)، روتر صفحات، پنل، سابسکریپشن، تست داخلی، <code>onUpgrade</code>، TLS خودامضا، کشف IP عمومی</td><td>همه‌ی ماژول‌ها</td></tr>
+<tr><td><code>src/ws.js</code></td><td>WebSocket سرور و کلاینت (RFC 6455) به‌صورت Duplex، HTTPUpgrade</td><td>—</td></tr>
+<tr><td><code>src/proxy.js</code></td><td>parse هدر VLESS/Trojan، احراز هویت، رله‌ی TCP، DNS برای UDP، آمار، سازنده‌ی هدر برای تست</td><td>config</td></tr>
+<tr><td><code>src/config.js</code></td><td>env + <code>.env</code>، تشخیص PaaS، state و ذخیره‌ی آن، <code>paths()</code>/<code>routes()</code>، override پنل</td><td>—</td></tr>
+<tr><td><code>src/links.js</code></td><td>لینک‌های <code>vless://</code> و <code>trojan://</code> (+ IP تمیز)، سابسکریپشن base64/raw/clash</td><td>config</td></tr>
+<tr><td><code>src/panel.js</code></td><td>قالب‌های HTML: راه‌اندازی، ورود، داشبورد، QR بزرگ، صفحه‌ی پوششی</td><td>—</td></tr>
+<tr><td><code>src/qr.js</code></td><td>رمزگذار QR (byte mode، EC L/M/Q/H، نسخه ۱–۴۰، انتخاب mask) → SVG data URI</td><td>—</td></tr>
+<tr><td><code>cloudflare-worker.js</code></td><td>Worker: بازنویسی hostname به <code>ORIGIN</code>، افزودن <code>X-Forwarded-Host/Proto</code></td><td>Cloudflare</td></tr>
+</table></div>
+
+<h3>مسیرها و پورت‌ها</h3>
+<div class="tablewrap"><table>
+<tr><th>مسیر</th><th>رویداد</th><th>کار</th></tr>
+<tr><td><code>/</code></td><td>request</td><td>صفحه‌ی ساده‌ی پوششی (200)</td></tr>
+<tr><td><code>/health</code></td><td>request</td><td>JSON وضعیت برای health check هاست</td></tr>
+<tr><td><code>/panel</code>, <code>/panel/{setup,login,logout,rotate,cleanips,usehost,clearhost,selftest}</code></td><td>request</td><td>پنل؛ همه‌ی اکشن‌ها POST و پشت کوکی امضاشده</td></tr>
+<tr><td><code>/sub/&lt;token&gt;[?format=raw|clash]</code></td><td>request</td><td>سابسکریپشن</td></tr>
+<tr><td><code>/vless-xxxxxxxx</code> · <code>/trojan-xxxxxxxx</code></td><td>upgrade</td><td>WebSocket → VLESS / Trojan</td></tr>
+<tr><td><code>/hu-xxxxxxxx</code> · <code>/thu-xxxxxxxx</code></td><td>upgrade</td><td>HTTPUpgrade → VLESS / Trojan</td></tr>
+<tr><td>هر مسیر دیگر</td><td>هر دو</td><td>404 (در upgrade: پاسخ خام 404 و بستن سوکت)</td></tr>
+</table></div>
+
+<!-- ============================================================ 8 -->
+<h2 id="limits"><span class="n">۸</span> مرزها و محدودیت‌ها</h2>
+<ul>
+  <li><b>UDP فقط DNS.</b> بازی و تماس صوتی که UDP خالص می‌خواهند کار نمی‌کنند؛ مرور، ویدیو، پیام‌رسان‌ها از TCP می‌روند و مشکلی ندارند. (علت: Cloudflare و هاست‌های HTTP فقط جریان TCP/WebSocket را عبور می‌دهند.)</li>
+  <li><b>VMess و Shadowsocks نیستند.</b> هر دو رمزنگاری در لایه‌ی پروتکل دارند که در این معماری ارزشی اضافه نمی‌کند، چون TLS بیرونی همه‌چیز را پوشانده است.</li>
+  <li><b>Reality/XTLS ممکن نیست.</b> نیاز به کنترل مستقیم سوکت TLS دارند؛ پشت Cloudflare یا پروکسی هاست، TLS در اختیار ما نیست.</li>
+  <li><b>دو TLS پشت سر هم</b> (کلاینت→Cloudflare، Worker→هاست) یعنی تأخیر دست‌دادن کمی بیشتر از اتصال مستقیم؛ بعد از برقراری، جریان داده پیوسته است.</li>
+  <li><b>Worker حالت ندارد</b> و هر اتصال WebSocket یک «درخواست» در سهمیه‌ی روزانه حساب می‌شود، نه هر بسته.</li>
+  <li><b>state روی دیسک ناپایدار</b> با هر دیپلوی عوض می‌شود؛ راه‌حل، دادن <code>UUID / TROJAN_PASSWORD / SUB_TOKEN / PANEL_PASSWORD</code> در env است.</li>
+  <li><b>مرز اعتماد:</b> سرور محتوای داخل اتصال‌های TLS کلاینت را نمی‌بیند، ولی مقصد (دامنه/IP و پورت) هر اتصال را می‌داند و در حالت <code>VERBOSE=1</code> لاگ می‌کند. پنل و سابسکریپشن فقط با رمز/توکن در دسترس‌اند و روی هر مسیر دیگری سرور خودش را یک اپ ساده نشان می‌دهد.</li>
+</ul>
+
+</div>

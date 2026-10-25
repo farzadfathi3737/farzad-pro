@@ -64,6 +64,17 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
   );
 }
 
+// Shown right after a successful login; carries the Set-Cookie and then moves on.
+function loginOkPage({ next, text = 'ورود موفق.' }) {
+  return page(
+    text,
+    `<meta http-equiv="refresh" content="0;url=${esc(next)}">
+<div class="card"><strong class="ok">${esc(text)}</strong> <span class="muted">در حال انتقال…</span>
+<div class="row" style="margin-top:12px"><a class="btn ghost" href="${esc(next)}">اگر منتقل نشدید، اینجا بزنید</a></div></div>
+<script>setTimeout(function(){location.replace(${JSON.stringify(next)})},150)</script>`
+  );
+}
+
 function fmtBytes(n) {
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
@@ -173,4 +184,4 @@ function decoyPage() {
 <body><div class="b"><h1>It works!</h1><p>The service is running.</p></div></body></html>`;
 }
 
-module.exports = { setupPage, loginPage, dashboard, decoyPage };
+module.exports = { setupPage, loginPage, loginOkPage, dashboard, decoyPage };
