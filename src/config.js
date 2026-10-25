@@ -113,7 +113,17 @@ const settings = {
     vmessWs: bool('ENABLE_VMESS_WS', true),
     vmessHu: bool('ENABLE_VMESS_HTTPUPGRADE', true),
     ssWs: bool('ENABLE_SS_WS', true),
+    // VLESS + Reality: a direct TCP listener (VPS only). 'auto' = on when the
+    // port is free and we're not on a PaaS; true/false force it.
+    reality: (() => { const v = String(env('ENABLE_REALITY', 'auto')).toLowerCase(); return v === 'auto' ? 'auto' : !['0', 'false', 'no', 'off'].includes(v); })(),
   },
+
+  // Reality (needs a real public IP; the port must be reachable from the internet)
+  realityPort: Number(env('REALITY_PORT', 443)),
+  realityDest: env('REALITY_DEST', 'dl.google.com:443'),     // camouflage site (must support TLS 1.3 + h2)
+  realitySni: env('REALITY_SNI', ''),                        // defaults to the host part of REALITY_DEST
+  realityAddress: env('REALITY_ADDRESS', ''),                // address in the share link; defaults to the public IP
+  publicIp: '',                                              // discovered at startup
 
   // Xray engine
   binDir: path.resolve(ROOT, env('BIN_DIR', 'bin')),
@@ -230,6 +240,11 @@ function ensureState() {
   const panelPassword = env('PANEL_PASSWORD');
   if (panelPassword && !verifyPassword(panelPassword, state.panelPasswordHash)) {
     state.panelPasswordHash = hashPassword(panelPassword);
+    changed = true;
+  }
+
+  if (!state.realityShortId) {
+    state.realityShortId = crypto.randomBytes(4).toString('hex');
     changed = true;
   }
 

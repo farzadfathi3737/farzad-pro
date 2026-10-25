@@ -104,7 +104,12 @@ function showQr(src,cap){var m=document.getElementById('qrm');document.getElemen
 
 function xrayLine(x) {
   if (!x || x.phase === 'disabled') return '<span class="muted">غیرفعال</span>';
-  if (x.phase === 'running') return `<span class="ok">در حال اجرا</span> <span class="muted mono">${esc(x.version || '')} (pid ${x.pid})</span> <span class="muted">— VMess و Shadowsocks</span>`;
+  if (x.phase === 'running') {
+    const r = x.reality && x.reality.active
+      ? ` · <span class="ok">Reality روی :${x.reality.port}</span>`
+      : ` · <span class="muted">Reality خاموش${x.reality && x.reality.reason ? ' (' + esc(x.reality.reason) + ')' : ''}</span>`;
+    return `<span class="ok">در حال اجرا</span> <span class="muted mono">${esc(x.version || '')} (pid ${x.pid})</span> <span class="muted">— VMess · Shadowsocks</span>${r}`;
+  }
   if (x.phase === 'downloading') return '<span class="warn">در حال دانلود Xray از GitHub…</span> <span class="muted">(صفحه را بعداً تازه کنید)</span>';
   if (x.phase === 'starting') return '<span class="warn">در حال راه‌اندازی…</span>';
   if (x.phase === 'stopped') return '<span class="muted">متوقف</span>';
@@ -255,6 +260,29 @@ function addSelected(){
 }
 </script>
 ${clean.length ? `<details><summary>نمایش کانفیگ‌های IP تمیز (${clean.length})</summary><div class="grid">${clean.map((c) => configCard(c, qrs)).join('')}</div></details>` : ''}
+</div>
+
+<div class="card">
+<div class="top"><strong>آخرین درخواست‌ها به سرور</strong><div class="row"><button type="button" class="ghost" onclick="loadLog()">تازه‌سازی</button><label style="margin:0;display:flex;gap:6px;align-items:center"><input type="checkbox" id="log-auto" checked> خودکار هر ۵ ثانیه</label></div></div>
+<p class="muted" style="margin:6px 0 10px">برای عیب‌یابی: در گوشی لینک سابسکریپشن را باز کن یا در کلاینت Real delay بزن، بعد این‌جا نگاه کن. اگر ردیفی نیامد، درخواست اصلاً به سرور نرسیده (ISP / Cloudflare / Worker). <span class="mono">upgrade 101</span> یعنی تونل برقرار شد؛ <span class="mono">404</span> روی <span class="mono">/sub/</span> یعنی توکن اشتباه است.</p>
+<div style="overflow-x:auto"><table id="log-table" style="border-collapse:collapse;width:100%;font-size:12.5px"><thead><tr><th style="text-align:right;padding:4px 8px">زمان</th><th style="text-align:right;padding:4px 8px">نوع</th><th style="text-align:right;padding:4px 8px">مسیر</th><th style="text-align:right;padding:4px 8px">وضعیت</th><th style="text-align:right;padding:4px 8px">کلاینت</th><th style="text-align:right;padding:4px 8px">IP</th><th style="text-align:right;padding:4px 8px">Host</th></tr></thead><tbody><tr><td colspan="7" class="muted" style="padding:8px">در حال بارگذاری…</td></tr></tbody></table></div>
+<script>
+var LOG_URL = ${JSON.stringify(`${panelPath}/log${sq}`)};
+function esc_(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function loadLog(){
+  fetch(LOG_URL,{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
+    var tb=document.querySelector('#log-table tbody'); if(!j.entries.length){tb.innerHTML='<tr><td colspan="7" class="muted" style="padding:8px">هنوز درخواستی ثبت نشده.</td></tr>';return}
+    tb.innerHTML=j.entries.map(function(e){
+      var ago=Math.round((j.now-e.t)/1000); var when=ago<60?ago+' ثانیه پیش':ago<3600?Math.round(ago/60)+' دقیقه پیش':Math.round(ago/3600)+' ساعت پیش';
+      var st=e.status; var col=st===101||(st>=200&&st<300)?'var(--ok)':st>=500?'var(--err)':st>=400?'var(--warn)':'inherit';
+      var kind=e.kind==='upgrade'?'upgrade':e.method; var note=e.note?' <span class="muted">('+esc_(e.note)+')</span>':'';
+      return '<tr><td style="padding:4px 8px;white-space:nowrap">'+when+'</td><td style="padding:4px 8px" class="mono">'+esc_(kind)+'</td><td style="padding:4px 8px" class="mono">'+esc_(e.path)+note+'</td><td style="padding:4px 8px;color:'+col+'" class="mono">'+esc_(st)+(e.ms!=null?' <span class="muted">'+e.ms+'ms</span>':'')+'</td><td style="padding:4px 8px">'+esc_(e.ua)+'</td><td style="padding:4px 8px" class="mono">'+esc_(e.ip)+'</td><td style="padding:4px 8px" class="mono">'+esc_(e.host)+'</td></tr>';
+    }).join('');
+    tb.querySelectorAll('td').forEach(function(c){c.style.borderBottom='1px solid var(--line)'});
+  }).catch(function(){});
+}
+loadLog(); setInterval(function(){ if(document.getElementById('log-auto').checked) loadLog(); },5000);
+</script>
 </div>
 
 <div class="card">

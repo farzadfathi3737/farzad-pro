@@ -22,6 +22,7 @@ const proxy = require('./proxy');
 const scan = require('./scan');
 const xhttp = require('./xhttp');
 const xray = require('./xray');
+const reqlog = require('./reqlog');
 const { settings, state, updateState, setPublicOverride, routes, xhttpRoutes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
@@ -370,6 +371,11 @@ async function handlePanel(req, res, url) {
     return send(res, 200, JSON.stringify({ host: settings.host, tested: results.length, ok, failed: results.filter((r) => !r.ok).length }), { 'Content-Type': 'application/json' });
   }
 
+  // Recent requests (diagnostics).
+  if (sub === '/log') {
+    return send(res, 200, JSON.stringify({ now: Date.now(), entries: reqlog.recent(150) }), { 'Content-Type': 'application/json' });
+  }
+
   // Tiny probe used by the dashboard's cookie check (JS fetch).
   if (sub === '/echo') {
     return send(res, 200, JSON.stringify({
@@ -471,6 +477,12 @@ function handleSubscription(req, res, url) {
 
 // ---- HTTP request router -------------------------------------------------------------
 async function onRequest(req, res) {
+  const started = Date.now();
+  res.on('finish', () => reqlog.add({
+    kind: 'http', method: req.method, path: req.url, status: res.statusCode, ms: Date.now() - started,
+    ip: clientIp(req), ua: reqlog.shortUa(req.headers['user-agent']),
+    host: req.headers['x-forwarded-host'] || req.headers.host || '-',
+  }));
   try {
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname;
@@ -501,12 +513,19 @@ async function onRequest(req, res) {
 function onUpgrade(req, socket, head) {
   const pathname = req.url.split('?')[0];
   const route = routes().get(pathname);
+  const logUp = (status, note) => reqlog.add({
+    kind: 'upgrade', method: req.method, path: req.url, status, note,
+    ip: clientIp(req), ua: reqlog.shortUa(req.headers['user-agent']),
+    host: req.headers['x-forwarded-host'] || req.headers.host || '-',
+  });
   if (!route) {
     const xrayPort = xray.routes().get(pathname);
-    if (xrayPort) return passThrough(req, socket, head, xrayPort);
+    if (xrayPort) { logUp(101, 'xray'); return passThrough(req, socket, head, xrayPort); }
+    logUp(404, 'unknown path');
     socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
     return;
   }
+  logUp(101, `${route.protocol}/${route.transport}`);
   socket.setNoDelay(true);
   socket.setTimeout(settings.idleTimeout, () => socket.destroy());
   socket.on('error', () => {});
@@ -598,11 +617,13 @@ async function discoverHost() {
 async function main() {
   log(`starting on port ${settings.port} (tls mode: ${settings.tlsMode}${settings.onPaaS ? ', PaaS detected' : ''})`);
 
+  // Public IP is needed for Reality links even when HOST is a (CDN) domain.
+  const ip = net.isIP(settings.host) ? settings.host : await discoverHost();
+  settings.publicIp = ip || '';
   if (!settings.host) {
-    const ip = await discoverHost();
     settings.host = ip || '127.0.0.1';
     log(`public host not set; using ${settings.host}${ip ? '' : ' (could not detect public IP — set HOST)'}`);
-  }
+  } else if (ip) log(`public IP ${ip}`);
 
   let server;
   if (settings.tlsMode === 'self') {

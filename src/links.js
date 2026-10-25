@@ -74,6 +74,16 @@ function ssLink({ address, path, label }) {
   return `ss://${userinfo}@${address}:${settings.publicPort}?plugin=${encodeURIComponent(plugin)}#${encodeURIComponent(name(label))}`;
 }
 
+// VLESS + Reality: direct TCP to the VPS IP; SNI is the camouflage site, not ours.
+function realityLink({ label }) {
+  const address = settings.realityAddress || settings.publicIp || settings.host;
+  const params = {
+    encryption: 'none', flow: 'xtls-rprx-vision', security: 'reality',
+    sni: xray.realitySni(), fp: 'chrome', pbk: state.realityPublicKey, sid: state.realityShortId, type: 'tcp',
+  };
+  return `vless://${state.uuid}@${address}:${xray.status.reality.port}?${q(params)}#${encodeURIComponent(name(label))}`;
+}
+
 // The protocol/transport combinations that are enabled.
 function kinds() {
   const p = paths();
@@ -86,6 +96,9 @@ function kinds() {
   if (settings.enable.trojanXh) out.push({ key: 'trojanXh', protocol: 'Trojan', transport: 'XHTTP', network: 'xhttp', path: p.trojanXh, build: trojanLink, tag: 'Trojan-XHTTP' });
   // Xray-served protocols appear only while Xray is actually running.
   if (xray.status.phase === 'running') {
+    if (xray.status.reality.active && state.realityPublicKey) {
+      out.push({ key: 'reality', protocol: 'VLESS', transport: 'Reality', network: 'tcp', path: null, build: realityLink, tag: 'Reality', engine: 'xray', direct: true });
+    }
     if (settings.enable.vmessWs) out.push({ key: 'vmessWs', protocol: 'VMess', transport: 'WebSocket', network: 'ws', path: p.vmessWs, build: vmessLink, tag: 'VMess-WS', engine: 'xray' });
     if (settings.enable.vmessHu) out.push({ key: 'vmessHu', protocol: 'VMess', transport: 'HTTPUpgrade', network: 'httpupgrade', path: p.vmessHu, build: vmessLink, tag: 'VMess-HU', engine: 'xray' });
     if (settings.enable.ssWs) out.push({ key: 'ssWs', protocol: 'Shadowsocks', transport: 'WebSocket', network: 'ws', path: p.ssWs, build: ssLink, tag: 'SS-WS', engine: 'xray' });
@@ -104,12 +117,13 @@ function allConfigs() {
     out.push({
       key: k.key, protocol: k.protocol, transport: k.transport, path: k.path, engine: k.engine || 'native',
       address: settings.host, isClean: false,
-      label: `${k.protocol} ${k.transport} ${tls}`,
-      link: k.build({ address: settings.host, path: k.path, network: k.network, label: `${k.tag}-${tls}` }),
+      label: k.direct ? `${k.protocol} ${k.transport}` : `${k.protocol} ${k.transport} ${tls}`,
+      link: k.build({ address: settings.host, path: k.path, network: k.network, label: k.direct ? k.tag : `${k.tag}-${tls}` }),
     });
   }
   for (const ip of state.cleanIps || []) {
     for (const k of kinds()) {
+      if (k.direct) continue; // Reality goes straight to the VPS; clean IPs don't apply
       out.push({
         key: `${k.key}@${ip}`, protocol: k.protocol, transport: k.transport, path: k.path, engine: k.engine || 'native',
         address: ip, isClean: true,
@@ -126,7 +140,7 @@ function tagsOf(c) {
   return new Set([
     c.protocol.toLowerCase(),                                   // vless trojan vmess shadowsocks
     c.protocol === 'Shadowsocks' ? 'ss' : null,
-    c.transport === 'WebSocket' ? 'ws' : c.transport.toLowerCase(), // ws httpupgrade xhttp
+    c.transport === 'WebSocket' ? 'ws' : c.transport.toLowerCase(), // ws httpupgrade xhttp reality
     c.engine,                                                   // native xray
     c.isClean ? 'clean' : 'main',
   ].filter(Boolean));
@@ -165,7 +179,7 @@ function clashYaml(filter = () => true) {
   const tls = tlsOn();
   const proxies = [];
   for (const c of allConfigs().filter(filter)) {
-    if (c.transport === 'XHTTP' || c.protocol === 'VMess' || c.protocol === 'Shadowsocks') continue; // kept simple: vless/trojan only
+    if (c.transport === 'XHTTP' || c.transport === 'Reality' || c.protocol === 'VMess' || c.protocol === 'Shadowsocks') continue; // kept simple: vless/trojan over ws
     const n = name(c.isClean ? `${c.protocol}-${c.transport} ${c.address}` : `${c.protocol}-${c.transport}`);
     const common =
       `    server: ${c.address}\n    port: ${settings.publicPort}\n    udp: false\n` +
