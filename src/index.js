@@ -243,15 +243,24 @@ async function selfTest(mode = 'internal', address = '') {
 
 // ---- panel ------------------------------------------------------------------------
 function renderDashboard(req, res, notice, sq = '') {
+  const reqAddr = requestAddress(req);
+  const isLocal = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(reqAddr.host);
+  // Reached over https at the very host we advertise, yet configured as plain
+  // http on a raw port → the configuration is certainly wrong; fix it in place.
+  if (!isLocal && !settings.publicOverride && reqAddr.host && reqAddr.host === settings.host &&
+      reqAddr.tls === 'proxy' && settings.tlsMode === 'off' && settings.publicPort !== reqAddr.port) {
+    setPublicOverride(reqAddr);
+    qrCache.clear();
+    log(`public address auto-corrected to ${reqAddr.host}:${reqAddr.port} (tls via proxy)`);
+    notice = notice || { ok: true, text: `آدرس عمومی خودکار اصلاح شد: ${reqAddr.host}:${reqAddr.port} با TLS. کانفیگ‌ها و لینک سابسکریپشن تازه شدند — دوباره کپی کنید.` };
+  }
+  const mismatch = !isLocal && reqAddr.host &&
+    (reqAddr.host !== settings.host || reqAddr.port !== settings.publicPort ||
+      (settings.tlsMode !== 'self' && reqAddr.tls !== settings.tlsMode));
   const configs = links.allConfigs();
   const subUrl = links.subscriptionUrl(baseUrl(req));
   const qrs = { __sub: qr(subUrl) };
   for (const c of configs) qrs[c.key] = qr(c.link);
-  const reqAddr = requestAddress(req);
-  const isLocal = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(reqAddr.host);
-  const mismatch = !isLocal && reqAddr.host &&
-    (reqAddr.host !== settings.host || reqAddr.port !== settings.publicPort ||
-      (settings.tlsMode !== 'self' && reqAddr.tls !== settings.tlsMode));
   return send(
     res,
     200,
