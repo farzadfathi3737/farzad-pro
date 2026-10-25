@@ -217,7 +217,7 @@ async function selfTest() {
 }
 
 // ---- panel ------------------------------------------------------------------------
-function renderDashboard(req, res, notice) {
+function renderDashboard(req, res, notice, sq = '') {
   const configs = links.allConfigs();
   const subUrl = links.subscriptionUrl(baseUrl(req));
   const qrs = { __sub: qr(subUrl) };
@@ -245,6 +245,7 @@ function renderDashboard(req, res, notice) {
       uptime: uptimeString(),
       qrs,
       notice,
+      sq,
     })
   );
 }
@@ -271,8 +272,16 @@ async function handlePanel(req, res, url) {
     return send(res, 200, panel.setupPage({ action: `${p}/setup` }));
   }
 
+  // Session: normally a cookie. Some Workers/host proxies drop cookies in one
+  // direction, so the same signed token may also travel in the URL (?s=…); every
+  // panel link/form then carries it along. The cookie path is preferred when it works.
   const cookies = parseCookies(req);
-  const authed = validSession(cookies[COOKIE]);
+  const sParam = url.searchParams.get('s') || '';
+  const authCookie = validSession(cookies[COOKIE]);
+  const authUrl = !authCookie && validSession(sParam);
+  const authed = authCookie || authUrl;
+  const sq = authUrl ? `?s=${encodeURIComponent(sParam)}` : '';
+  const fromLogin = url.searchParams.get('from') === 'login';
 
   if (sub === '/login' && req.method === 'POST') {
     if (!loginAllowed(ip)) {
@@ -281,10 +290,12 @@ async function handlePanel(req, res, url) {
     const form = parseForm(await readBody(req));
     if (verifyPassword(form.password || '', state.panelPasswordHash)) {
       failures.delete(ip);
-      // A 200 page that navigates itself, not a 302: some proxies/Workers follow a
-      // redirect on the server side and drop the Set-Cookie of the 302 on the way.
-      return send(res, 200, panel.loginOkPage({ next: `${p}?from=login` }), {
-        'Set-Cookie': sessionCookie(req, makeSession(), SESSION_TTL / 1000),
+      const token = makeSession();
+      // A 200 page that navigates itself, not a 302: some proxies follow a redirect
+      // server-side and drop the Set-Cookie of the 302 on the way. The token also
+      // rides in the URL so the panel works even if the cookie never comes back.
+      return send(res, 200, panel.loginOkPage({ next: `${p}?from=login&s=${encodeURIComponent(token)}` }), {
+        'Set-Cookie': sessionCookie(req, token, SESSION_TTL / 1000),
       });
     }
     noteFailure(ip);
@@ -292,17 +303,30 @@ async function handlePanel(req, res, url) {
   }
 
   if (!authed) {
-    const fromLogin = url.searchParams.get('from') === 'login';
     const hadAnyCookie = Boolean(req.headers.cookie);
     const error = !fromLogin ? undefined
-      : cookies[COOKIE]
-        ? 'کوکی رسید ولی امضایش معتبر نیست — احتمالاً سرویس ری‌استارت شده و کلید نشست عوض شده. دوباره وارد شوید.'
-        : `رمز درست بود ولی مرورگر کوکی نشست را برنگرداند${hadAnyCookie ? '' : ' (هیچ کوکی‌ای ارسال نشد)'}. ` +
-          'اگر پشت Worker/پروکسی هستید، کوکی‌ها را عبور نمی‌دهد یا مرورگر کوکی را رد کرده (حالت خصوصی/مسدود بودن کوکی).';
-    if (fromLogin) log(`login cookie missing: cookieHeader=${hadAnyCookie} xfh=${req.headers['x-forwarded-host'] || '-'} xfp=${req.headers['x-forwarded-proto'] || '-'}`);
+      : cookies[COOKIE] || sParam
+        ? 'نشست معتبر نیست — احتمالاً سرویس ری‌استارت شده و کلید نشست عوض شده. دوباره وارد شوید.'
+        : 'رمز درست بود ولی نه کوکی رسید نه توکن. دوباره وارد شوید.';
+    if (fromLogin) log(`login session missing: cookieHeader=${hadAnyCookie} s=${Boolean(sParam)} xfh=${req.headers['x-forwarded-host'] || '-'} xfp=${req.headers['x-forwarded-proto'] || '-'}`);
     return send(res, 200, panel.loginPage({ action: `${p}/login`, error }));
   }
 
+  // Cookie works → drop the token from the URL for a clean address.
+  if (fromLogin && authCookie) return redirect(res, p);
+
+  // Tiny probe used by the dashboard's cookie check (JS fetch).
+  if (sub === '/echo') {
+    return send(res, 200, JSON.stringify({
+      cookieHeader: Boolean(req.headers.cookie),
+      sessionCookie: Boolean(cookies[COOKIE]),
+      probeCookie: Boolean(cookies.v2g_probe),
+      xForwardedHost: req.headers['x-forwarded-host'] || null,
+      xForwardedProto: req.headers['x-forwarded-proto'] || null,
+    }), { 'Content-Type': 'application/json' });
+  }
+
+  const back = p + sq;
   if (req.method === 'POST') {
     if (sub === '/logout') {
       return send(res, 200, panel.loginOkPage({ next: p, text: 'خارج شدید.' }), { 'Set-Cookie': sessionCookie(req, '', 0) });
@@ -311,36 +335,41 @@ async function handlePanel(req, res, url) {
       updateState({ uuid: crypto.randomUUID(), trojanPassword: randomToken(12), subToken: randomToken(16) });
       qrCache.clear();
       log('credentials rotated');
-      return redirect(res, p);
+      return redirect(res, back);
     }
     if (sub === '/usehost') {
       const a = requestAddress(req);
       setPublicOverride(a);
       qrCache.clear();
       log(`public address set from panel: ${a.host}:${a.port} tls=${a.tls}`);
-      return redirect(res, p);
+      return redirect(res, back);
     }
     if (sub === '/clearhost') {
       setPublicOverride(null);
       qrCache.clear();
       log('public address override cleared — restart to re-apply env/auto-detected values');
-      return renderDashboard(req, res, { ok: true, text: 'آدرس دستی پاک شد. برای اعمال مقادیر env/خودکار، سرویس را ری‌استارت کنید.' });
+      return renderDashboard(req, res, { ok: true, text: 'آدرس دستی پاک شد. برای اعمال مقادیر env/خودکار، سرویس را ری‌استارت کنید.' }, sq);
     }
     if (sub === '/cleanips') {
       const form = parseForm(await readBody(req));
       updateState({ cleanIps: parseCleanIps(form.ips) });
       log(`clean IPs updated (${state.cleanIps.length})`);
-      return redirect(res, p);
+      return redirect(res, back);
     }
     if (sub === '/selftest') {
       const r = await selfTest();
       log('self-test:', r.ok ? 'OK' : 'FAIL', '-', r.text);
-      return renderDashboard(req, res, r);
+      return renderDashboard(req, res, r, sq);
     }
     return notFound(res);
   }
 
-  if (sub === '/' || sub === '') return renderDashboard(req, res);
+  if (sub === '/' || sub === '') {
+    const notice = fromLogin && authUrl
+      ? { ok: true, text: 'وارد شدید. کوکی نشست به سرور نرسید، پس نشست از طریق آدرس صفحه حفظ می‌شود — از همین دکمه‌ها و لینک‌های پنل استفاده کنید و آدرس را به کسی ندهید.' }
+      : undefined;
+    return renderDashboard(req, res, notice, sq);
+  }
   return notFound(res);
 }
 

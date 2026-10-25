@@ -102,7 +102,8 @@ const QR_MODAL = `
 function showQr(src,cap){var m=document.getElementById('qrm');document.getElementById('qrm-img').src=src;document.getElementById('qrm-cap').textContent=cap||'';m.style.display='flex'}
 </script>`;
 
-function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAddr, mismatch, stats, configs, cleanIps, subUrl, uptime, qrs, notice }) {
+function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAddr, mismatch, stats, configs, cleanIps, subUrl, uptime, qrs, notice, sq = '' }) {
+  const act = (name) => `${esc(panelPath)}/${name}${esc(sq)}`;
   const tlsLabel = { proxy: 'TLS (توسط هاست / کلودفلر)', self: 'TLS (گواهی خودامضا)', off: 'بدون TLS' }[tlsMode] || tlsMode;
   const main = configs.filter((c) => !c.isClean);
   const clean = configs.filter((c) => c.isClean);
@@ -111,27 +112,41 @@ function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAd
     ? `<div class="notice" style="border-color:var(--warn)">
 <strong class="warn">⚠ آدرس کانفیگ‌ها با آدرسی که پنل را باز کرده‌اید فرق دارد.</strong>
 <div class="muted" style="margin:6px 0 10px">شما از <span class="mono">${reqAddr.tls === 'proxy' ? 'https' : 'http'}://${esc(reqAddr.host)}:${reqAddr.port}</span> وارد شده‌اید، ولی کانفیگ‌ها به <span class="mono">${esc(host)}:${publicPort}</span> (${esc(tlsLabel)}) اشاره می‌کنند. اگر کلاینت‌ها باید از همین آدرسِ مرورگر وصل شوند، دکمه‌ی زیر را بزنید تا آدرس، پورت و TLS از روی همین درخواست تنظیم شود. <b>اگر آدرس نشان‌داده‌شده دامنه‌ی هاست است نه دامنه‌ی خودتان</b> (مثلاً پشت Worker هستید و Worker هدر Host را عوض می‌کند)، نزنید و به‌جایش <span class="mono">HOST</span> را روی دامنه‌ی خودتان بگذارید.</div>
-<form method="post" action="${esc(panelPath)}/usehost"><button type="submit">استفاده از آدرس ${esc(reqAddr.host)}</button></form>
+<form method="post" action="${act('usehost')}"><button type="submit">استفاده از آدرس ${esc(reqAddr.host)}</button></form>
 </div>`
     : '';
 
   return page(
     'پنل V2Gate',
     `<div class="top"><div><h1>V2Gate</h1><h2>پنل کانفیگ‌های VLESS / Trojan — موتور بومی Node.js</h2></div>
-<form method="post" action="${esc(panelPath)}/logout"><button class="ghost" type="submit">خروج</button></form></div>
+<form method="post" action="${act('logout')}"><button class="ghost" type="submit">خروج</button></form></div>
 
 ${notice ? `<div class="notice ${notice.ok ? 'ok' : 'err'}">${esc(notice.text)}</div>` : ''}
+${sq ? `<div class="notice" style="border-color:var(--warn)"><strong class="warn">حالت بدون کوکی</strong> <span class="muted">— تشخیص مسیر کوکی:</span> <span id="ck" class="muted">در حال بررسی…</span>
+<script>
+(function(){try{document.cookie='v2g_probe=1; Path=${esc(panelPath)}; SameSite=Strict'+(location.protocol==='https:'?'; Secure':'')}catch(e){}
+var stored=/v2g_probe=1/.test(document.cookie);
+fetch('${act('echo')}',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(j){
+ var el=document.getElementById('ck');
+ var msg=[]; msg.push('مرورگر کوکی را ذخیره کرد: '+(stored?'بله':'خیر'));
+ msg.push('کوکی به سرور رسید: '+(j.probeCookie?'بله':'خیر'));
+ msg.push('کوکی ورود (HttpOnly) به سرور رسید: '+(j.sessionCookie?'بله':'خیر'));
+ var verdict = !stored ? 'مرورگر کوکی را رد می‌کند (حالت خصوصی یا تنظیمات).' : !j.probeCookie ? 'مرورگر کوکی را می‌فرستد ولی Worker/پروکسی هاست هدر Cookie را حذف می‌کند.' : !j.sessionCookie ? 'کوکی‌های معمولی عبور می‌کنند ولی Set-Cookie ورود (HttpOnly/Secure) به مرورگر نرسیده — پروکسی Set-Cookie را حذف می‌کند.' : 'کوکی‌ها کار می‌کنند؛ دفعه‌ی بعد ورود عادی خواهد بود.';
+ el.textContent = msg.join(' · ') + ' ⇒ ' + verdict;
+}).catch(function(){document.getElementById('ck').textContent='بررسی انجام نشد.'});
+})();
+</script></div>` : ''}
 ${mismatchBox}
 
 <div class="card"><div class="kv">
-<b>آدرس سرور</b><span><span class="mono">${esc(host)}:${publicPort}</span>${publicOverride ? ` <span class="badge">تنظیم‌شده از پنل</span> <form method="post" action="${esc(panelPath)}/clearhost" style="display:inline"><button type="submit" class="ghost" style="padding:2px 8px;font-size:12px">پاک کردن</button></form>` : ''}</span>
+<b>آدرس سرور</b><span><span class="mono">${esc(host)}:${publicPort}</span>${publicOverride ? ` <span class="badge">تنظیم‌شده از پنل</span> <form method="post" action="${act('clearhost')}" style="display:inline"><button type="submit" class="ghost" style="padding:2px 8px;font-size:12px">پاک کردن</button></form>` : ''}</span>
 <b>حالت TLS</b><span>${esc(tlsLabel)}</span>
 <b>اتصال‌های فعال</b><span>${stats.active} <span class="muted">(کل: ${stats.total} · خطا: ${stats.errors})</span></span>
 <b>ترافیک</b><span class="mono">↑ ${fmtBytes(stats.bytesIn)} &nbsp; ↓ ${fmtBytes(stats.bytesOut)}</span>
 <b>مدت اجرا</b><span>${esc(uptime)}</span>
 </div>
 <div class="row" style="margin-top:12px">
-<form method="post" action="${esc(panelPath)}/selftest"><button class="ghost" type="submit">تست داخلی پروکسی</button></form>
+<form method="post" action="${act('selftest')}"><button class="ghost" type="submit">تست داخلی پروکسی</button></form>
 <span class="muted">یک اتصال VLESS از خود سرور به اینترنت برقرار می‌کند؛ اگر موفق بود یعنی موتور سالم است و مشکل احتمالی در مسیر شبکه‌ی شما تا سرور است.</span>
 </div></div>
 
@@ -154,7 +169,7 @@ ${mismatchBox}
 وقتی سرویس پشت <b>Cloudflare</b> است (دامنه‌ی proxied یا Worker)، می‌توانید به‌جای دامنه، به یکی از IPهای کلودفلر که در ISP شما سالم است وصل شوید؛ SNI و Host همچنان دامنه‌ی اصلی می‌ماند.
 هر خط یک IP یا دامنه (مثل <span class="mono">162.159.x.x</span> یا یک ساب‌دامین CDN). برای هر IP، نسخه‌ای از همه‌ی کانفیگ‌ها ساخته و به سابسکریپشن اضافه می‌شود.
 </p>
-<form method="post" action="${esc(panelPath)}/cleanips">
+<form method="post" action="${act('cleanips')}">
 <textarea name="ips" placeholder="162.159.192.1&#10;188.114.96.1&#10;cdn.example.com">${esc((cleanIps || []).join('\n'))}</textarea>
 <div class="row" style="margin-top:10px"><button type="submit">ذخیره</button><span class="muted">${clean.length ? `${cleanIps.length} آدرس → ${clean.length} کانفیگ` : 'هنوز IP تمیزی ثبت نشده'}</span></div>
 </form>
@@ -165,7 +180,7 @@ ${clean.length ? `<details><summary>نمایش کانفیگ‌های IP تمیز
 <strong>مدیریت</strong>
 <p class="muted" style="margin:6px 0 10px">ریست کردن UUID همه کانفیگ‌ها و لینک سابسکریپشن فعلی را باطل می‌کند و باید دوباره در کلاینت‌ها وارد شوند.</p>
 <div class="row">
-<form method="post" action="${esc(panelPath)}/rotate" onsubmit="return confirm('UUID و رمزها بازتولید شوند؟ کانفیگ‌های فعلی از کار می‌افتند.')"><button class="danger" type="submit">ریست UUID و رمزها</button></form>
+<form method="post" action="${act('rotate')}" onsubmit="return confirm('UUID و رمزها بازتولید شوند؟ کانفیگ‌های فعلی از کار می‌افتند.')"><button class="danger" type="submit">ریست UUID و رمزها</button></form>
 </div></div>
 
 <script>
