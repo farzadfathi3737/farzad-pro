@@ -234,6 +234,15 @@ async function selfTest(mode = 'internal', address = '') {
       if (m) {
         const ms = Date.now() - started;
         const ok = m[1][0] === '2' || m[1][0] === '3';
+        if (ok && !external) {
+          // Also exercise client-style DNS (what browsers do inside the tunnel).
+          const q = Buffer.from('abcd01000001000000000000' + '03777777076578616d706c6503636f6d00' + '00010001', 'hex'); // A? www.example.com
+          return proxy.dohQuery(q, 5000).then((ans) => {
+            finish({ ok: true, text: `موفق — ${useVless ? 'VLESS' : 'Trojan'} over WebSocket → ${target.hostname} پاسخ HTTP ${m[1]} داد (${ms}ms). DNS داخل تونل (DoH): پاسخ ${ans.length} بایتی در ${proxy.dohStats.lastMs}ms. موتور پروکسی سالم است.` });
+          }).catch((e) => {
+            finish({ ok: false, text: `تونل سالم است (HTTP ${m[1]} در ${ms}ms) ولی DNS داخل تونل شکست خورد: ${e.message} — مرور وب کند یا ناممکن می‌شود. DNS_DOH را تغییر دهید (مثلاً https://dns.google/dns-query).` });
+          });
+        }
         finish({ ok, text: ok
           ? (external
             ? `موفق — از ${where} تا سرور، WebSocket و ${useVless ? 'VLESS' : 'Trojan'} کامل عبور کرد و ${target.hostname} پاسخ HTTP ${m[1]} داد (${ms}ms). کل زنجیره سالم است؛ اگر کلاینت وصل نمی‌شود، مشکل مسیر ISP شما تا Cloudflare است (IP تمیز).`
