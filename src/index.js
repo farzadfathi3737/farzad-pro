@@ -23,6 +23,7 @@ const scan = require('./scan');
 const xhttp = require('./xhttp');
 const xray = require('./xray');
 const reqlog = require('./reqlog');
+const mux = require('./mux');
 const { settings, state, updateState, setPublicOverride, routes, xhttpRoutes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
@@ -251,14 +252,14 @@ function renderDashboard(req, res, notice, sq = '') {
   const isLocal = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(reqAddr.host);
   // Reached over https at the very host we advertise, yet configured as plain
   // http on a raw port → the configuration is certainly wrong; fix it in place.
-  if (!isLocal && !settings.publicOverride && reqAddr.host && reqAddr.host === settings.host &&
+  if (!isLocal && !settings.publicOverride && reqAddr.host && reqAddr.host === settings.host && reqAddr.host !== settings.publicIp &&
       reqAddr.tls === 'proxy' && settings.tlsMode === 'off' && settings.publicPort !== reqAddr.port) {
     setPublicOverride(reqAddr);
     qrCache.clear();
     log(`public address auto-corrected to ${reqAddr.host}:${reqAddr.port} (tls via proxy)`);
     notice = notice || { ok: true, text: `آدرس عمومی خودکار اصلاح شد: ${reqAddr.host}:${reqAddr.port} با TLS. کانفیگ‌ها و لینک سابسکریپشن تازه شدند — دوباره کپی کنید.` };
   }
-  const mismatch = !isLocal && reqAddr.host &&
+  const mismatch = !isLocal && reqAddr.host && reqAddr.host !== settings.publicIp &&
     (reqAddr.host !== settings.host || reqAddr.port !== settings.publicPort ||
       (settings.tlsMode !== 'self' && reqAddr.tls !== settings.tlsMode));
   const configs = links.allConfigs();
@@ -285,6 +286,7 @@ function renderDashboard(req, res, notice, sq = '') {
       qrs,
       notice,
       sq,
+      directAddr: settings.publicIp ? `${settings.publicIp}:${settings.directPort || settings.port}` : '',
     })
   );
 }
@@ -617,40 +619,62 @@ async function discoverHost() {
 async function main() {
   log(`starting on port ${settings.port} (tls mode: ${settings.tlsMode}${settings.onPaaS ? ', PaaS detected' : ''})`);
 
-  // Public IP is needed for Reality links even when HOST is a (CDN) domain.
-  const ip = net.isIP(settings.host) ? settings.host : await discoverHost();
+  // Public IP is needed for direct/Reality links even when HOST is a (CDN) domain.
+  const ip = settings.publicIpEnv || (net.isIP(settings.host) ? settings.host : await discoverHost());
   settings.publicIp = ip || '';
   if (!settings.host) {
     settings.host = ip || '127.0.0.1';
     log(`public host not set; using ${settings.host}${ip ? '' : ' (could not detect public IP — set HOST)'}`);
   } else if (ip) log(`public IP ${ip}`);
 
-  let server;
-  if (settings.tlsMode === 'self') {
-    server = https.createServer(loadOrCreateSelfSignedCert(), onRequest);
-  } else {
-    server = http.createServer(onRequest);
+  // Plain HTTP server (behind a Worker / host proxy) and, when a certificate can be
+  // made, an HTTPS server for direct IP:port connections. Neither listens itself:
+  // a protocol-sniffing listener (mux.js) hands each connection to the right one.
+  const tune = (s) => { s.on('upgrade', onUpgrade); s.keepAliveTimeout = 65000; s.headersTimeout = 70000; s.requestTimeout = 0; return s; };
+  const httpServer = tune(http.createServer(onRequest));
+  let httpsServer = null;
+  try {
+    httpsServer = tune(https.createServer(loadOrCreateSelfSignedCert(), onRequest));
+    settings.directTls = true;
+  } catch (e) {
+    settings.directTls = false;
+    if (settings.tlsMode === 'self') throw e;
+    log(`direct TLS unavailable (${e.message.split('(')[0].trim()}); direct configs disabled`);
   }
-  server.on('upgrade', onUpgrade);
-  server.keepAliveTimeout = 65000;
-  server.headersTimeout = 70000;
-  server.requestTimeout = 0;
 
-  server.listen(settings.port, '0.0.0.0', () => {
-    const scheme = settings.tlsMode === 'self' ? 'https' : 'http';
-    log(`listening on ${scheme}://0.0.0.0:${settings.port}`);
-    log(`panel: ${settings.panelPath}   subscription: ${settings.subPath}/<token>`);
-    log(`routes: ${[...routes().entries()].map(([k, v]) => `${k} (${v.protocol}/${v.transport})`).join(', ')}` +
-      `${xhttpRoutes().size ? ', ' + [...xhttpRoutes().entries()].map(([k, v]) => `${k} (${v}/xhttp)`).join(', ') : ''}`);
-    log(`clients connect to ${settings.host}:${settings.publicPort} ${links.tlsOn() ? 'with' : 'without'} TLS`);
+  // The HTTPS server listens on a loopback port; the mux splices TLS connections into it.
+  let httpsPort = null;
+  if (httpsServer) {
+    await new Promise((resolve) => httpsServer.listen(0, '127.0.0.1', resolve));
+    httpsPort = httpsServer.address().port;
+  }
+  const realityTarget = () => (xray.status.reality.active ? { port: xray.status.reality.loopPort, sni: xray.realitySni() } : null);
+  const muxes = [];
+  const listenMux = (port, label) => new Promise((resolve) => {
+    const m = mux.createMux({ httpServer, httpsPort, reality: realityTarget, log });
+    m.on('error', (e) => { log(`${label} listener on :${port} failed: ${e.message}`); resolve(false); });
+    m.listen(port, '0.0.0.0', () => { muxes.push(m); log(`${label} listening on 0.0.0.0:${port} (http${httpsServer ? ' + https' : ''}${settings.enable.reality !== false ? ' + reality' : ''})`); resolve(true); });
   });
+  await listenMux(settings.port, 'main');
+  log(`panel: ${settings.panelPath}   subscription: ${settings.subPath}/<token>`);
+  log(`routes: ${[...routes().entries()].map(([k, v]) => `${k} (${v.protocol}/${v.transport})`).join(', ')}` +
+    `${xhttpRoutes().size ? ', ' + [...xhttpRoutes().entries()].map(([k, v]) => `${k} (${v}/xhttp)`).join(', ') : ''}`);
+  log(`clients connect to ${settings.host}:${settings.publicPort} ${links.tlsOn() ? 'with' : 'without'} TLS` +
+    (settings.publicIp && settings.directTls ? `; direct: ${settings.publicIp}:${settings.directPort || settings.port}` : ''));
 
-  // Optional Xray engine boots in the background so the panel is up immediately.
-  xray.boot();
+  // Optional Xray engine (VMess/SS/Reality) boots in the background so the panel is up
+  // immediately. A second public listener on REALITY_PORT (e.g. 443) is added when free.
+  xray.boot().then(async () => {
+    const r = xray.status.reality;
+    if (r.active && r.extraPort) {
+      const ok = await listenMux(r.extraPort, 'reality');
+      if (!ok) r.extraPort = null;
+    }
+  });
 
   const shutdown = (sig) => {
     log(`${sig} received, shutting down`);
-    server.close();
+    for (const m of muxes) m.close();
     xray.stop().finally(() => process.exit(0));
     setTimeout(() => process.exit(0), 3000).unref();
   };

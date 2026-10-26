@@ -21,6 +21,8 @@ function loadDotEnv() {
     let val = line.slice(eq + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
+    } else {
+      val = val.replace(/\s+#.*$/, '').trim(); // allow "KEY=value  # comment"
     }
     if (process.env[key] === undefined) process.env[key] = val;
   }
@@ -119,11 +121,21 @@ const settings = {
   },
 
   // Reality (needs a real public IP; the port must be reachable from the internet)
-  realityPort: Number(env('REALITY_PORT', 443)),
+  // Extra public listener for Reality (e.g. 443 on a VPS). 0 = main port only, which is
+  // the safe default for containers that expose a single port.
+  realityPort: Number(env('REALITY_PORT', 0)),
   realityDest: env('REALITY_DEST', 'dl.google.com:443'),     // camouflage site (must support TLS 1.3 + h2)
   realitySni: env('REALITY_SNI', ''),                        // defaults to the host part of REALITY_DEST
   realityAddress: env('REALITY_ADDRESS', ''),                // address in the share link; defaults to the public IP
   publicIp: '',                                              // discovered at startup
+  publicIpEnv: env('PUBLIC_IP', ''),                         // override auto-detection
+  directTls: false,                                          // set at startup when a self-signed cert exists
+
+  // Direct configs: clients connect straight to the public IP:port (no CDN) with
+  // self-signed TLS. 'auto' = on when a public IP and a certificate are available.
+  direct: (() => { const v = String(env('ENABLE_DIRECT', 'auto')).toLowerCase(); return v === 'auto' ? 'auto' : !['0', 'false', 'no', 'off'].includes(v); })(),
+  directPort: Number(env('DIRECT_PORT', 0)) || null,         // public port if it differs from PORT (NAT / container mapping)
+  directSni: env('DIRECT_SNI', ''),                          // SNI in direct links; defaults to HOST (any name works: cert is self-signed)
 
   // Xray engine
   binDir: path.resolve(ROOT, env('BIN_DIR', 'bin')),

@@ -25,7 +25,9 @@ const log = (...a) => console.log('[xray]', ...a);
 // status.phase: disabled | downloading | starting | running | stopped | failed
 const status = {
   phase: settings.enable.xray ? 'starting' : 'disabled', pid: null, startedAt: null, error: null, version: null,
-  reality: { active: false, port: null, reason: null },
+  // loopPort: where Xray listens (127.0.0.1); port: public port for share links;
+  // extraPort: an additional public listener (REALITY_PORT) when it is free.
+  reality: { active: false, loopPort: null, port: null, extraPort: null, reason: null },
 };
 
 // ---- download ------------------------------------------------------------------
@@ -116,8 +118,8 @@ function inbounds() {
   // Reality is a direct public listener — not routed through the Node server.
   if (status.reality.active && state.realityPrivateKey) {
     const sni = realitySni();
-    list.push({ key: 'reality', path: null, port: status.reality.port, direct: true, inbound: {
-      tag: 'vless-reality', listen: '0.0.0.0', port: status.reality.port, protocol: 'vless',
+    list.push({ key: 'reality', path: null, port: status.reality.loopPort, direct: true, inbound: {
+      tag: 'vless-reality', listen: '127.0.0.1', port: status.reality.loopPort, protocol: 'vless',
       settings: { clients: [{ id: state.uuid, flow: 'xtls-rprx-vision', level: 0 }], decryption: 'none' },
       streamSettings: {
         network: 'tcp', security: 'reality',
@@ -155,19 +157,26 @@ function genX25519() {
 }
 
 async function prepareReality() {
-  status.reality = { active: false, port: null, reason: null };
+  const prevExtra = status.reality.extraPort;
+  status.reality = { active: false, loopPort: null, port: null, extraPort: null, reason: null };
   const want = settings.enable.reality;
   if (want === false) { status.reality.reason = 'disabled'; return; }
   if (want === 'auto' && settings.onPaaS) { status.reality.reason = 'PaaS host: no direct public port'; return; }
-  let port = settings.realityPort;
-  if (port === settings.port) port = port === 443 ? 8443 : 443;
-  if (!(await portFree(port))) { status.reality.reason = `port ${port} is in use`; return; }
+  if (!settings.publicIp) { status.reality.reason = 'public IP unknown (set REALITY_ADDRESS)'; return; }
   if (!state.realityPrivateKey || !state.realityPublicKey) {
     const keys = await genX25519();
     updateState({ realityPrivateKey: keys.privateKey, realityPublicKey: keys.publicKey });
     log('generated Reality key pair');
   }
-  status.reality = { active: true, port, reason: null };
+  const loopPort = settings.xrayBasePort + 3;
+  // Reality is reachable through the main port (mux sniffs the SNI) and, when free,
+  // also directly on REALITY_PORT (443 by default) via a second mux listener.
+  let extraPort = null;
+  if (settings.realityPort && settings.realityPort !== settings.port) {
+    if (prevExtra === settings.realityPort || await portFree(settings.realityPort)) extraPort = settings.realityPort;
+    else log(`REALITY_PORT ${settings.realityPort} is in use; Reality stays on the main port only`);
+  }
+  status.reality = { active: true, loopPort, port: extraPort || settings.directPort || settings.port, extraPort, reason: null };
 }
 
 function buildConfig() {
@@ -262,7 +271,7 @@ async function boot() {
     status.version = await version();
     log(status.version);
     try { await prepareReality(); } catch (e) { status.reality.reason = e.message; log('reality not enabled:', e.message); }
-    if (status.reality.active) log(`Reality listening on :${status.reality.port} (sni ${realitySni()})`);
+    if (status.reality.active) log(`Reality on 127.0.0.1:${status.reality.loopPort} → public :${status.reality.port}${status.reality.extraPort ? ` and :${settings.port}` : ''} (sni ${realitySni()})`);
     else log(`Reality off: ${status.reality.reason}`);
     spawnXray();
   } catch (e) {

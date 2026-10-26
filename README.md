@@ -49,7 +49,19 @@
 
 هر `git push` به `main` دیپلوی جدید می‌سازد. پلن رایگان بعد از ۱۵ دقیقه بی‌استفاده بودن خواب می‌رود و اولین اتصال بعدی ۳۰–۵۰ ثانیه طول می‌کشد.
 
-## ۲) اگر کانفیگ وصل نشد ولی تست داخلی موفق بود → IP تمیز
+## ۲) کانفیگ‌های مستقیم (IP:پورت، بدون Cloudflare)
+
+اگر IP و پورت خام سرور از ایران باز است (`telnet IP PORT` جواب می‌دهد)، به Cloudflare و IP تمیز نیازی نیست. اپ روی **همان یک پورت** سه نوع ترافیک را از روی بایت‌های اول تشخیص می‌دهد:
+
+| ترافیک | مقصد |
+|---|---|
+| HTTP خام (از Worker یا پروکسی هاست) | سرور HTTP داخلی — پنل، سابسکریپشن، کانفیگ‌های پشت دامنه |
+| TLS با SNI دلخواه | سرور HTTPS داخلی با گواهی خودامضا — **کانفیگ‌های مستقیم** VLESS/Trojan/VMess روی WS/HTTPUpgrade/XHTTP (`allowInsecure=1`) |
+| TLS با SNI سایت پوششی (`dl.google.com`) | Xray — **VLESS + Reality** (بدون گواهی، بدون allowInsecure) |
+
+بخش «کانفیگ‌های مستقیم» پنل همه را نشان می‌دهد؛ در سابسکریپشن با `?only=direct` جدا می‌شوند. متغیرها: `PUBLIC_IP` (اگر تشخیص خودکار غلط بود)، `DIRECT_PORT` (اگر پورت عمومی با `PORT` فرق دارد)، `DIRECT_SNI`، `ENABLE_DIRECT`. Reality با `ENABLE_REALITY` و `REALITY_DEST` کنترل می‌شود و با `REALITY_PORT=443` روی VPS یک پورت اضافه هم می‌گیرد.
+
+## ۲ب) اگر کانفیگ وصل نشد ولی تست داخلی موفق بود → IP تمیز
 
 یعنی مسیر شما تا سرور (دامنه/IP هاست) از سمت ISP بسته یا کند است. راه‌حل: سرویس را پشت **Cloudflare** ببرید و با IP تمیز وصل شوید.
 
@@ -176,6 +188,7 @@ src/ws.js        WebSocket سرور/کلاینت (RFC 6455) و HTTPUpgrade — �
 src/proxy.js     موتور VLESS و Trojan: parse هدر، رله‌ی TCP، DNS برای UDP
 src/xray.js      موتور اختیاری Xray: دانلود، کانفیگ، پروسه — VMess-WS/HU و Shadowsocks-WS روی 127.0.0.1
 src/zip.js       استخراج آرشیو Xray بدون وابستگی
+src/mux.js       تشخیص نوع اتصال روی یک پورت: HTTP خام / TLS خودامضا / Reality (از روی SNI)
 src/xhttp.js     ترنسپورت XHTTP (packet-up / stream-up / stream-one) به‌صورت Duplex
 src/scan.js      یافتن IP تمیز: نمونه‌گیری از محدوده‌های Cloudflare و تأیید با SNI
 src/config.js    متغیرهای محیطی و state ذخیره‌شده (UUID، رمزها، IPهای تمیز)
