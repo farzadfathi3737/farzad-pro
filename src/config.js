@@ -136,6 +136,9 @@ const settings = {
   direct: (() => { const v = String(env('ENABLE_DIRECT', 'auto')).toLowerCase(); return v === 'auto' ? 'auto' : !['0', 'false', 'no', 'off'].includes(v); })(),
   directPort: Number(env('DIRECT_PORT', 0)) || null,         // public port if it differs from PORT (NAT / container mapping)
   directSni: env('DIRECT_SNI', ''),                          // SNI in direct links; defaults to HOST (any name works: cert is self-signed)
+  // Direct configs WITHOUT TLS (plain WebSocket/XHTTP to IP:port). Needed when an HTTP-only
+  // proxy sits in front of the port. 'auto' = on when a public IP is known.
+  directPlain: (() => { const v = String(env('ENABLE_DIRECT_PLAIN', 'auto')).toLowerCase(); return v === 'auto' ? 'auto' : !['0', 'false', 'no', 'off'].includes(v); })(),
 
   // Xray engine
   binDir: path.resolve(ROOT, env('BIN_DIR', 'bin')),

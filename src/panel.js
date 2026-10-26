@@ -124,7 +124,7 @@ function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAd
   const clean = configs.filter((c) => c.isClean);
   const directBox = direct.length ? `
 <h2 style="margin-top:22px">کانفیگ‌های مستقیم <span class="badge">بدون Cloudflare · ${esc(directAddr)}</span></h2>
-<p class="muted" style="margin:0 0 10px">کلاینت مستقیم به IP و پورت سرور وصل می‌شود؛ دامنه، Worker و IP تمیز در مسیر نیستند. اگر از ایران <span class="mono">telnet IP پورت</span> جواب می‌دهد، این‌ها بیشترین شانس را دارند. <b>Reality</b> نه گواهی می‌خواهد نه allowInsecure؛ بقیه با گواهی خودامضا هستند (در لینک <span class="mono">allowInsecure=1</span> هست).</p>
+<p class="muted" style="margin:0 0 10px">کلاینت مستقیم به IP و پورت سرور وصل می‌شود؛ دامنه، Worker و IP تمیز در مسیر نیستند. <b>Reality</b> نه گواهی می‌خواهد نه allowInsecure؛ «مستقیم» با گواهی خودامضا است (<span class="mono">allowInsecure=1</span> در لینک هست)؛ «مستقیم بدون TLS» برای وقتی است که جلوی پورت یک پروکسی HTTP نشسته و TLS را عبور نمی‌دهد (<span class="mono">curl -k https://IP:PORT/health</span> reset می‌دهد ولی <span class="mono">http://</span> جواب می‌دهد) — رمزنگاری لایه‌ی انتقال ندارد، ولی ترافیک داخل (HTTPS سایت‌ها) همچنان رمز است.</p>
 <div class="grid">${direct.map((c) => configCard(c, qrs)).join('')}</div>` : '';
 
   const mismatchBox = mismatch
