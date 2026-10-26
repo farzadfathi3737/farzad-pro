@@ -45,6 +45,7 @@ PORT=$APP_PORT
 TLS_MODE=self
 PANEL_PASSWORD=$PANEL_PASSWORD
 ENABLE_REALITY=true
+# extra public port for Reality (the main port serves it too)
 REALITY_PORT=$REALITY_PORT
 REALITY_DEST=dl.google.com:443
 # HOST=your.domain.com      # optional: a domain pointing at this VPS (or proxied by Cloudflare)

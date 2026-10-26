@@ -12,6 +12,10 @@ function tlsOn() {
 function insecure() {
   return settings.tlsMode === 'self';
 }
+function directOn() {
+  if (settings.direct === false) return false;
+  return Boolean(settings.publicIp && settings.directTls);
+}
 
 function q(params) {
   return Object.entries(params)
@@ -22,56 +26,65 @@ function q(params) {
 
 const name = (label) => `${settings.configName} ${label}`;
 
-function vlessLink({ address, path, network, label }) {
-  const tls = tlsOn();
+// Endpoint the link points at. Default: the public host behind the CDN/host proxy.
+// `direct`: straight to the public IP:port with our self-signed certificate.
+function endpoint(direct) {
+  if (direct) {
+    return { port: settings.directPort || settings.port, tls: true, sni: settings.directSni || settings.host, insecure: true, host: settings.directSni || settings.host };
+  }
+  return { port: settings.publicPort, tls: tlsOn(), sni: settings.host, insecure: insecure(), host: settings.host };
+}
+
+function vlessLink({ address, path, network, label, direct }) {
+  const e = endpoint(direct);
   const params = {
     encryption: 'none',
-    security: tls ? 'tls' : 'none',
-    sni: tls ? settings.host : undefined,
-    fp: tls ? 'chrome' : undefined,
-    allowInsecure: tls && insecure() ? '1' : undefined,
+    security: e.tls ? 'tls' : 'none',
+    sni: e.tls ? e.sni : undefined,
+    fp: e.tls ? 'chrome' : undefined,
+    allowInsecure: e.tls && e.insecure ? '1' : undefined,
     type: network,
-    host: settings.host,
+    host: e.host,
     path,
     // XHTTP behind a CDN must use packet-up (CDNs buffer streaming request bodies).
-    mode: network === 'xhttp' ? 'packet-up' : undefined,
+    mode: network === 'xhttp' ? (direct ? 'auto' : 'packet-up') : undefined,
   };
-  return `vless://${state.uuid}@${address}:${settings.publicPort}?${q(params)}#${encodeURIComponent(name(label))}`;
+  return `vless://${state.uuid}@${address}:${e.port}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
 
-function trojanLink({ address, path, network, label }) {
-  const tls = tlsOn();
+function trojanLink({ address, path, network, label, direct }) {
+  const e = endpoint(direct);
   const params = {
-    security: tls ? 'tls' : 'none',
-    sni: tls ? settings.host : undefined,
-    fp: tls ? 'chrome' : undefined,
-    allowInsecure: tls && insecure() ? '1' : undefined,
+    security: e.tls ? 'tls' : 'none',
+    sni: e.tls ? e.sni : undefined,
+    fp: e.tls ? 'chrome' : undefined,
+    allowInsecure: e.tls && e.insecure ? '1' : undefined,
     type: network,
-    host: settings.host,
+    host: e.host,
     path,
-    mode: network === 'xhttp' ? 'packet-up' : undefined,
+    mode: network === 'xhttp' ? (direct ? 'auto' : 'packet-up') : undefined,
   };
-  return `trojan://${encodeURIComponent(state.trojanPassword)}@${address}:${settings.publicPort}?${q(params)}#${encodeURIComponent(name(label))}`;
+  return `trojan://${encodeURIComponent(state.trojanPassword)}@${address}:${e.port}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
 
-function vmessLink({ address, path, network, label }) {
-  const tls = tlsOn();
+function vmessLink({ address, path, network, label, direct }) {
+  const e = endpoint(direct);
   const obj = {
-    v: '2', ps: name(label), add: address, port: String(settings.publicPort), id: state.uuid, aid: '0', scy: 'auto',
-    net: network, type: 'none', host: settings.host, path, tls: tls ? 'tls' : '', sni: tls ? settings.host : '',
-    fp: tls ? 'chrome' : '', alpn: '',
+    v: '2', ps: name(label), add: address, port: String(e.port), id: state.uuid, aid: '0', scy: 'auto',
+    net: network, type: 'none', host: e.host, path, tls: e.tls ? 'tls' : '', sni: e.tls ? e.sni : '',
+    fp: e.tls ? 'chrome' : '', alpn: '',
   };
-  if (tls && insecure()) obj.allowInsecure = true;
+  if (e.tls && e.insecure) obj.allowInsecure = true;
   return 'vmess://' + Buffer.from(JSON.stringify(obj)).toString('base64');
 }
 
 // Shadowsocks over WebSocket (v2ray-plugin style): NekoBox, Shadowrocket, Clash Meta.
-function ssLink({ address, path, label }) {
-  const tls = tlsOn();
+function ssLink({ address, path, label, direct }) {
+  const e = endpoint(direct);
   const userinfo = Buffer.from(`${settings.ssMethod}:${state.ssPassword}`).toString('base64url');
-  const plugin = ['v2ray-plugin', tls ? 'tls' : '', `host=${settings.host}`, `path=${path}`, 'mode=websocket', tls && insecure() ? 'skip-cert-verify' : '']
+  const plugin = ['v2ray-plugin', e.tls ? 'tls' : '', `host=${e.host}`, `path=${path}`, 'mode=websocket', e.tls && e.insecure ? 'skip-cert-verify' : '']
     .filter(Boolean).join(';');
-  return `ss://${userinfo}@${address}:${settings.publicPort}?plugin=${encodeURIComponent(plugin)}#${encodeURIComponent(name(label))}`;
+  return `ss://${userinfo}@${address}:${e.port}?plugin=${encodeURIComponent(plugin)}#${encodeURIComponent(name(label))}`;
 }
 
 // VLESS + Reality: direct TCP to the VPS IP; SNI is the camouflage site, not ours.
@@ -116,10 +129,22 @@ function allConfigs() {
   for (const k of kinds()) {
     out.push({
       key: k.key, protocol: k.protocol, transport: k.transport, path: k.path, engine: k.engine || 'native',
-      address: settings.host, isClean: false,
+      address: k.direct ? (settings.realityAddress || settings.publicIp || settings.host) : settings.host, isClean: false,
       label: k.direct ? `${k.protocol} ${k.transport}` : `${k.protocol} ${k.transport} ${tls}`,
       link: k.build({ address: settings.host, path: k.path, network: k.network, label: k.direct ? k.tag : `${k.tag}-${tls}` }),
     });
+  }
+  // Direct variants: public IP + raw port, self-signed TLS (no CDN in the path).
+  if (directOn()) {
+    for (const k of kinds()) {
+      if (k.direct) continue; // Reality is already direct
+      out.push({
+        key: `${k.key}@direct`, protocol: k.protocol, transport: k.transport, path: k.path, engine: k.engine || 'native',
+        address: settings.publicIp, isClean: false, isDirect: true,
+        label: `${k.protocol} ${k.transport} · مستقیم`,
+        link: k.build({ address: settings.publicIp, path: k.path, network: k.network, label: `${k.tag}-Direct`, direct: true }),
+      });
+    }
   }
   for (const ip of state.cleanIps || []) {
     for (const k of kinds()) {
@@ -142,7 +167,8 @@ function tagsOf(c) {
     c.protocol === 'Shadowsocks' ? 'ss' : null,
     c.transport === 'WebSocket' ? 'ws' : c.transport.toLowerCase(), // ws httpupgrade xhttp reality
     c.engine,                                                   // native xray
-    c.isClean ? 'clean' : 'main',
+    c.isClean ? 'clean' : c.isDirect ? 'direct' : 'main',
+    c.transport === 'Reality' ? 'direct' : null,
   ].filter(Boolean));
 }
 
@@ -179,7 +205,7 @@ function clashYaml(filter = () => true) {
   const tls = tlsOn();
   const proxies = [];
   for (const c of allConfigs().filter(filter)) {
-    if (c.transport === 'XHTTP' || c.transport === 'Reality' || c.protocol === 'VMess' || c.protocol === 'Shadowsocks') continue; // kept simple: vless/trojan over ws
+    if (c.isDirect || c.transport === 'XHTTP' || c.transport === 'Reality' || c.protocol === 'VMess' || c.protocol === 'Shadowsocks') continue; // kept simple: vless/trojan over ws via the public host
     const n = name(c.isClean ? `${c.protocol}-${c.transport} ${c.address}` : `${c.protocol}-${c.transport}`);
     const common =
       `    server: ${c.address}\n    port: ${settings.publicPort}\n    udp: false\n` +
@@ -201,4 +227,4 @@ function subscriptionUrl(baseUrl) {
   return `${baseUrl}${settings.subPath}/${state.subToken}`;
 }
 
-module.exports = { allConfigs, subscriptionRaw, subscriptionBase64, clashYaml, subscriptionUrl, makeFilter, tlsOn, insecure };
+module.exports = { allConfigs, subscriptionRaw, subscriptionBase64, clashYaml, subscriptionUrl, makeFilter, tlsOn, insecure, directOn };

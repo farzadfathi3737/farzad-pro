@@ -116,11 +116,16 @@ function xrayLine(x) {
   return `<span style="color:var(--err)">در دسترس نیست</span> <span class="muted">${esc(x.error || '')} — کانفیگ‌های بومی (VLESS/Trojan/XHTTP) کار می‌کنند</span>`;
 }
 
-function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAddr, mismatch, stats, xray, configs, cleanIps, subUrl, uptime, qrs, notice, sq = '' }) {
+function dashboard({ panelPath, host, publicPort, tlsMode, publicOverride, reqAddr, mismatch, stats, xray, configs, cleanIps, subUrl, uptime, qrs, notice, sq = '', directAddr = '' }) {
   const act = (name) => `${esc(panelPath)}/${name}${esc(sq)}`;
   const tlsLabel = { proxy: 'TLS (توسط هاست / کلودفلر)', self: 'TLS (گواهی خودامضا)', off: 'بدون TLS' }[tlsMode] || tlsMode;
-  const main = configs.filter((c) => !c.isClean);
+  const direct = configs.filter((c) => c.isDirect || c.transport === 'Reality');
+  const main = configs.filter((c) => !c.isClean && !direct.includes(c));
   const clean = configs.filter((c) => c.isClean);
+  const directBox = direct.length ? `
+<h2 style="margin-top:22px">کانفیگ‌های مستقیم <span class="badge">بدون Cloudflare · ${esc(directAddr)}</span></h2>
+<p class="muted" style="margin:0 0 10px">کلاینت مستقیم به IP و پورت سرور وصل می‌شود؛ دامنه، Worker و IP تمیز در مسیر نیستند. اگر از ایران <span class="mono">telnet IP پورت</span> جواب می‌دهد، این‌ها بیشترین شانس را دارند. <b>Reality</b> نه گواهی می‌خواهد نه allowInsecure؛ بقیه با گواهی خودامضا هستند (در لینک <span class="mono">allowInsecure=1</span> هست).</p>
+<div class="grid">${direct.map((c) => configCard(c, qrs)).join('')}</div>` : '';
 
   const mismatchBox = mismatch
     ? `<div class="notice" style="border-color:var(--warn)">
@@ -189,7 +194,8 @@ ${mismatchBox}
 </div>
 </div>
 
-<h2 style="margin-top:22px">کانفیگ‌های اصلی</h2>
+${directBox}
+<h2 style="margin-top:22px">کانفیگ‌های اصلی <span class="badge">از طریق ${esc(host)}</span></h2>
 <div class="grid">${main.map((c) => configCard(c, qrs)).join('')}</div>
 
 <div class="card">
