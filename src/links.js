@@ -54,7 +54,7 @@ function vlessLink({ address, path, network, label, direct }) {
     host: e.host,
     path,
     // XHTTP behind a CDN must use packet-up (CDNs buffer streaming request bodies).
-    mode: network === 'xhttp' ? (direct ? 'auto' : 'packet-up') : undefined,
+    mode: network === 'xhttp' ? 'packet-up' : undefined, // stream-up stalls behind proxies; packet-up works everywhere
   };
   return `vless://${state.uuid}@${address}:${e.port}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
@@ -69,7 +69,7 @@ function trojanLink({ address, path, network, label, direct }) {
     type: network,
     host: e.host,
     path,
-    mode: network === 'xhttp' ? (direct ? 'auto' : 'packet-up') : undefined,
+    mode: network === 'xhttp' ? 'packet-up' : undefined,
   };
   return `trojan://${encodeURIComponent(state.trojanPassword)}@${address}:${e.port}?${q(params)}#${encodeURIComponent(name(label))}`;
 }

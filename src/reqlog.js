@@ -13,8 +13,10 @@ function maskPath(p) {
 }
 
 function add(e) {
-  entries.push({ t: Date.now(), ...e, path: maskPath(e.path || '') });
+  const entry = { t: Date.now(), ...e, path: maskPath(e.path || '') };
+  entries.push(entry);
   if (entries.length > MAX) entries.splice(0, entries.length - MAX);
+  return entry; // callers may update status/ms later (in-flight requests)
 }
 
 function recent(n = 100) {
