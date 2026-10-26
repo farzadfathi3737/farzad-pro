@@ -19,7 +19,7 @@ const { settings } = require('./config');
 
 const SESSION_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_SESSIONS = 2000;
-const MAX_PENDING_OUT = 4 * 1024 * 1024;   // bytes buffered before the GET arrives
+const MAX_PENDING_OUT = 8 * 1024 * 1024;   // bytes buffered before the GET arrives
 const MAX_REORDER = 64;                      // out-of-order POSTs kept
 const WAIT_FOR_GET_MS = 30 * 1000;
 
@@ -32,7 +32,7 @@ const RESP_HEADERS = {
 
 class XhttpSession extends Duplex {
   constructor(id, log) {
-    super({ readableHighWaterMark: 1024 * 1024 });
+    super({ readableHighWaterMark: 4 * 1024 * 1024 }); // uploads buffered before relay backpressure kicks in
     this.id = id;
     this.log = log;
     this.res = null;           // the download response
@@ -53,7 +53,7 @@ class XhttpSession extends Duplex {
     if (this.res) this.res.destroy();
     res.writeHead(200, RESP_HEADERS);
     res.flushHeaders();
-    if (res.socket) res.socket.setNoDelay(true);
+    if (res.socket) { res.socket.setNoDelay(true); res.socket.setKeepAlive(true, 15000); }
     this.res = res;
     for (const c of this.pendingOut) res.write(c);
     this.pendingOut = [];

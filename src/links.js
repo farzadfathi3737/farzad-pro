@@ -30,6 +30,14 @@ function q(params) {
 
 const name = (label) => `${settings.configName} ${label}`;
 
+// XHTTP client-side tuning, embedded in the link as Xray's `extra` JSON:
+// more parallel HTTP connections and shorter POST interval → better throughput on HTTP/1.1.
+const XHTTP_EXTRA = JSON.stringify({
+  scMaxEachPostBytes: 1000000,
+  scMinPostsIntervalMs: 10,
+  xmux: { maxConcurrency: '16-32', maxConnections: 0, cMaxReuseTimes: 0, hMaxRequestTimes: 0 },
+});
+
 // Endpoint the link points at. Default: the public host behind the CDN/host proxy.
 // `direct`: straight to the public IP:port with our self-signed certificate.
 function endpoint(direct) {
@@ -55,6 +63,7 @@ function vlessLink({ address, path, network, label, direct }) {
     path,
     // XHTTP behind a CDN must use packet-up (CDNs buffer streaming request bodies).
     mode: network === 'xhttp' ? 'packet-up' : undefined, // stream-up stalls behind proxies; packet-up works everywhere
+    extra: network === 'xhttp' ? XHTTP_EXTRA : undefined,
   };
   return `vless://${state.uuid}@${address}:${e.port}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
@@ -70,6 +79,7 @@ function trojanLink({ address, path, network, label, direct }) {
     host: e.host,
     path,
     mode: network === 'xhttp' ? 'packet-up' : undefined,
+    extra: network === 'xhttp' ? XHTTP_EXTRA : undefined,
   };
   return `trojan://${encodeURIComponent(state.trojanPassword)}@${address}:${e.port}?${q(params)}#${encodeURIComponent(name(label))}`;
 }
