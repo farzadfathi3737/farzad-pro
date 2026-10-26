@@ -154,6 +154,8 @@ const settings = {
   // Set DNS_DOH= (empty) to fall back to TCP DNS_RESOLVER:53.
   dohUrl: env('DNS_DOH', 'https://1.1.1.1/dns-query'),
   dnsResolver: env('DNS_RESOLVER', '8.8.8.8'),
+  // Full UDP relay (QUIC, games, VoIP). Off → only DNS is relayed.
+  udpRelay: bool('UDP_RELAY', true),
   dnsResolverPort: Number(env('DNS_RESOLVER_PORT', 53)),
   idleTimeout: Number(env('IDLE_TIMEOUT', 300)) * 1000,
   blockPrivate: bool('BLOCK_PRIVATE', true),
