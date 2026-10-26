@@ -15,7 +15,6 @@ const net = require('net');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
 const QR = require('./qr');
 const ws = require('./ws');
 const proxy = require('./proxy');
@@ -24,6 +23,7 @@ const xhttp = require('./xhttp');
 const xray = require('./xray');
 const reqlog = require('./reqlog');
 const mux = require('./mux');
+const certgen = require('./cert');
 const { settings, state, updateState, setPublicOverride, routes, xhttpRoutes, paths, parseCleanIps, hashPassword, verifyPassword, randomToken } = require('./config');
 const links = require('./links');
 const panel = require('./panel');
@@ -560,37 +560,29 @@ function passThrough(req, socket, head, port) {
   socket.on('close', () => upstream.destroy());
 }
 
-// ---- TLS (self-signed) -----------------------------------------------------------------
+// ---- TLS (self-signed, generated in pure Node) --------------------------------------------
 function loadOrCreateSelfSignedCert() {
   const certFile = path.join(settings.dataDir, 'cert.pem');
   const keyFile = path.join(settings.dataDir, 'key.pem');
+  const wantNames = [settings.host, settings.publicIp].filter(Boolean);
   if (fs.existsSync(certFile) && fs.existsSync(keyFile)) {
-    const x = new crypto.X509Certificate(fs.readFileSync(certFile));
-    if (new Date(x.validTo).getTime() - Date.now() > 7 * 86400 * 1000) {
-      return { cert: fs.readFileSync(certFile), key: fs.readFileSync(keyFile) };
+    try {
+      const x = new crypto.X509Certificate(fs.readFileSync(certFile));
+      const san = x.subjectAltName || '';
+      const covers = wantNames.every((n) => san.includes(n));
+      if (covers && new Date(x.validTo).getTime() - Date.now() > 7 * 86400 * 1000) {
+        return { cert: fs.readFileSync(certFile), key: fs.readFileSync(keyFile) };
+      }
+      log(covers ? 'TLS certificate expiring soon, regenerating' : 'TLS certificate does not cover the current host/IP, regenerating');
+    } catch (e) {
+      log('stored certificate unreadable, regenerating:', e.message);
     }
-    log('TLS certificate expiring soon, regenerating');
   }
-  // Node has no X.509 *issuing* API, so we lean on the openssl CLI (present on
-  // virtually every Linux image; the Dockerfile installs it explicitly).
-  const san = net.isIP(settings.host) ? `IP:${settings.host}` : `DNS:${settings.host}`;
-  try {
-    execFileSync(
-      'openssl',
-      ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '825',
-        '-keyout', keyFile, '-out', certFile,
-        '-subj', `/CN=${settings.host}`, '-addext', `subjectAltName=${san}`],
-      { stdio: ['ignore', 'ignore', 'pipe'] }
-    );
-  } catch (err) {
-    throw new Error(
-      `TLS_MODE=self needs the "openssl" command to create a certificate (${err.message.split('\n')[0]}). ` +
-      'Install openssl, or set TLS_MODE=off / TLS_MODE=proxy.'
-    );
-  }
-  fs.chmodSync(keyFile, 0o600);
-  log('generated self-signed certificate for', settings.host);
-  return { cert: fs.readFileSync(certFile), key: fs.readFileSync(keyFile) };
+  const { cert, key } = certgen.generate({ commonName: settings.host, altNames: wantNames, days: 825 });
+  fs.writeFileSync(certFile, cert);
+  fs.writeFileSync(keyFile, key, { mode: 0o600 });
+  log(`generated self-signed certificate for ${wantNames.join(', ')}`);
+  return { cert, key };
 }
 
 // ---- public IP discovery ------------------------------------------------------------------
@@ -651,7 +643,8 @@ async function main() {
   const realityTarget = () => (xray.status.reality.active ? { port: xray.status.reality.loopPort, sni: xray.realitySni() } : null);
   const muxes = [];
   const listenMux = (port, label) => new Promise((resolve) => {
-    const m = mux.createMux({ httpServer, httpsPort, reality: realityTarget, log });
+    const m = mux.createMux({ httpServer, httpsPort, reality: realityTarget, log,
+      onDecision: (d) => reqlog.add({ kind: 'tcp', method: '-', path: `:${port}`, status: d.kind === 'dropped' ? 'RST' : d.kind === 'empty' ? '—' : 'OK', note: d.note, ip: d.ip, ua: '-', host: d.sni || '-' }) });
     m.on('error', (e) => { log(`${label} listener on :${port} failed: ${e.message}`); resolve(false); });
     m.listen(port, '0.0.0.0', () => { muxes.push(m); log(`${label} listening on 0.0.0.0:${port} (http${httpsServer ? ' + https' : ''}${settings.enable.reality !== false ? ' + reality' : ''})`); resolve(true); });
   });

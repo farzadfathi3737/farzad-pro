@@ -280,8 +280,8 @@ function loadLog(){
     var tb=document.querySelector('#log-table tbody'); if(!j.entries.length){tb.innerHTML='<tr><td colspan="7" class="muted" style="padding:8px">هنوز درخواستی ثبت نشده.</td></tr>';return}
     tb.innerHTML=j.entries.map(function(e){
       var ago=Math.round((j.now-e.t)/1000); var when=ago<60?ago+' ثانیه پیش':ago<3600?Math.round(ago/60)+' دقیقه پیش':Math.round(ago/3600)+' ساعت پیش';
-      var st=e.status; var col=st===101||(st>=200&&st<300)?'var(--ok)':st>=500?'var(--err)':st>=400?'var(--warn)':'inherit';
-      var kind=e.kind==='upgrade'?'upgrade':e.method; var note=e.note?' <span class="muted">('+esc_(e.note)+')</span>':'';
+      var st=e.status; var col=st===101||st==='OK'||(st>=200&&st<300)?'var(--ok)':st==='RST'||st>=500?'var(--err)':st>=400?'var(--warn)':'inherit';
+      var kind=e.kind==='upgrade'?'upgrade':e.kind==='tcp'?'tcp':e.method; var note=e.note?' <span class="muted">('+esc_(e.note)+')</span>':'';
       return '<tr><td style="padding:4px 8px;white-space:nowrap">'+when+'</td><td style="padding:4px 8px" class="mono">'+esc_(kind)+'</td><td style="padding:4px 8px" class="mono">'+esc_(e.path)+note+'</td><td style="padding:4px 8px;color:'+col+'" class="mono">'+esc_(st)+(e.ms!=null?' <span class="muted">'+e.ms+'ms</span>':'')+'</td><td style="padding:4px 8px">'+esc_(e.ua)+'</td><td style="padding:4px 8px" class="mono">'+esc_(e.ip)+'</td><td style="padding:4px 8px" class="mono">'+esc_(e.host)+'</td></tr>';
     }).join('');
     tb.querySelectorAll('td').forEach(function(c){c.style.borderBottom='1px solid var(--line)'});

@@ -58,7 +58,7 @@ function splice(socket, head, port) {
   up.on('connect', () => { if (head.length) up.write(head); socket.pipe(up); up.pipe(socket); socket.resume(); });
 }
 
-function createMux({ httpServer, httpsPort, reality, log = () => {} }) {
+function createMux({ httpServer, httpsPort, reality, log = () => {}, onDecision = () => {} }) {
   const stats = { http: 0, https: 0, reality: 0, dropped: 0 };
 
   const server = net.createServer((socket) => {
@@ -76,8 +76,10 @@ function createMux({ httpServer, httpsPort, reality, log = () => {} }) {
       if (buf.length && buf[0] === 0x16) {
         const sni = parseSni(buf);
         const r = reality && reality();
+        const ip = socket.remoteAddress;
         if (r && sni && sni === r.sni) {
           stats.reality++;
+          onDecision({ kind: 'reality', note: 'tls → reality', sni, ip });
           splice(socket, buf, r.port);
           return;
         }
@@ -85,14 +87,17 @@ function createMux({ httpServer, httpsPort, reality, log = () => {} }) {
           // The TLS server must see the ClientHello through its own handle, so the
           // peeked bytes are replayed over a loopback connection instead of unshift().
           stats.https++;
+          onDecision({ kind: 'https', note: 'tls → https (direct)', sni, ip });
           splice(socket, buf, httpsPort);
           return;
         }
         stats.dropped++;
+        onDecision({ kind: 'dropped', note: 'tls dropped: no certificate', sni, ip });
         socket.destroy();
         return;
       }
       stats.http++;
+      if (!buf.length) { onDecision({ kind: 'empty', note: 'no data (closed)', ip: socket.remoteAddress }); socket.destroy(); return; }
       if (buf.length) socket.unshift(buf);
       httpServer.emit('connection', socket);
       socket.resume();
