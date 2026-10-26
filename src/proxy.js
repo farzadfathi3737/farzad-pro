@@ -12,6 +12,7 @@
 // to a TCP resolver unchanged.
 
 const net = require('net');
+const https = require('https');
 const crypto = require('crypto');
 const { settings, state } = require('./config');
 
@@ -107,6 +108,68 @@ function parseTrojan(buf) {
   return { cmd, port, host: addr.host, payload: buf.subarray(off), responseHeader: null };
 }
 
+// ---- DNS over HTTPS ------------------------------------------------------------------------
+// The client's UDP DNS packets arrive length-prefixed (VLESS/Trojan UDP framing). Each
+// packet is a complete DNS wire message, which is exactly what DoH POSTs — so it is
+// forwarded untouched over :443 (outbound :53 is often blocked on container hosts)
+// and the raw answer is written back with the same length prefix.
+const dohAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
+const dohStats = { queries: 0, errors: 0, lastMs: null, lastError: null };
+
+function dohQuery(message, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(settings.dohUrl);
+    const started = Date.now();
+    const r = https.request({
+      agent: dohAgent, host: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'POST', timeout,
+      headers: { 'Content-Type': 'application/dns-message', Accept: 'application/dns-message', 'Content-Length': message.length },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        dohStats.lastMs = Date.now() - started;
+        if (res.statusCode !== 200) { dohStats.errors++; dohStats.lastError = `HTTP ${res.statusCode}`; return reject(new Error(`doh: HTTP ${res.statusCode}`)); }
+        dohStats.queries++;
+        resolve(Buffer.concat(chunks));
+      });
+    });
+    r.on('error', (e) => { dohStats.errors++; dohStats.lastError = e.code || e.message; reject(e); });
+    r.on('timeout', () => r.destroy(new Error('doh: timeout')));
+    r.end(message);
+  });
+}
+
+// A Duplex that answers length-prefixed DNS messages via DoH (replaces a TCP :53 socket).
+function dohRelayStream() {
+  const { Duplex } = require('stream');
+  let pending = Buffer.alloc(0);
+  const d = new Duplex({
+    read() {},
+    write(chunk, enc, cb) {
+      pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+      while (pending.length >= 2) {
+        const len = pending.readUInt16BE(0);
+        if (pending.length < 2 + len) break;
+        const msg = pending.subarray(2, 2 + len);
+        pending = pending.subarray(2 + len);
+        dohQuery(msg).then((ans) => {
+          const out = Buffer.alloc(2 + ans.length);
+          out.writeUInt16BE(ans.length, 0);
+          ans.copy(out, 2);
+          if (!d.destroyed) d.push(out);
+        }).catch(() => { /* client retries */ });
+      }
+      cb();
+    },
+    final(cb) { d.push(null); cb(); },
+  });
+  // net.Socket-compatible surface used by relay()
+  d.setNoDelay = () => {};
+  d.setTimeout = () => {};
+  process.nextTick(() => d.emit('connect'));
+  return d;
+}
+
 // ---- relay ----------------------------------------------------------------------------
 function relay(stream, req, log) {
   let target;
@@ -115,7 +178,7 @@ function relay(stream, req, log) {
     target = net.connect({ host: req.host, port: req.port });
   } else if (req.cmd === CMD_UDP) {
     if (req.port !== 53) throw new Error('udp: only DNS (port 53) is supported');
-    target = net.connect({ host: DNS_RESOLVER, port: settings.dnsResolverPort });
+    target = settings.dohUrl ? dohRelayStream() : net.connect({ host: DNS_RESOLVER, port: settings.dnsResolverPort });
   } else {
     throw new Error(`unsupported command ${req.cmd}`);
   }
@@ -225,4 +288,4 @@ function buildTrojanHeader(host, port) {
   ]);
 }
 
-module.exports = { handle, stats, buildVlessHeader, buildTrojanHeader, isBlockedHost };
+module.exports = { handle, stats, dohStats, dohQuery, buildVlessHeader, buildTrojanHeader, isBlockedHost };
