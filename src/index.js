@@ -480,11 +480,15 @@ function handleSubscription(req, res, url) {
 // ---- HTTP request router -------------------------------------------------------------
 async function onRequest(req, res) {
   const started = Date.now();
-  res.on('finish', () => reqlog.add({
-    kind: 'http', method: req.method, path: req.url, status: res.statusCode, ms: Date.now() - started,
+  // Logged at start as "in flight" so long-lived XHTTP streams are visible; finalized on finish/close.
+  const entry = reqlog.add({
+    kind: 'http', method: req.method, path: req.url, status: '…', ms: null,
     ip: clientIp(req), ua: reqlog.shortUa(req.headers['user-agent']),
     host: req.headers['x-forwarded-host'] || req.headers.host || '-',
-  }));
+  });
+  const done = (how) => { if (entry.ms != null) return; entry.status = res.headersSent ? res.statusCode : how; entry.ms = Date.now() - started; };
+  res.on('finish', () => done('finished'));
+  res.on('close', () => done('closed'));
   try {
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname;
