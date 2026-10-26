@@ -16,6 +16,10 @@ function directOn() {
   if (settings.direct === false) return false;
   return Boolean(settings.publicIp && settings.directTls);
 }
+function directPlainOn() {
+  if (settings.directPlain === false) return false;
+  return Boolean(settings.publicIp);
+}
 
 function q(params) {
   return Object.entries(params)
@@ -29,6 +33,9 @@ const name = (label) => `${settings.configName} ${label}`;
 // Endpoint the link points at. Default: the public host behind the CDN/host proxy.
 // `direct`: straight to the public IP:port with our self-signed certificate.
 function endpoint(direct) {
+  if (direct === 'plain') {
+    return { port: settings.directPort || settings.port, tls: false, sni: '', insecure: false, host: settings.directSni || settings.host };
+  }
   if (direct) {
     return { port: settings.directPort || settings.port, tls: true, sni: settings.directSni || settings.host, insecure: true, host: settings.directSni || settings.host };
   }
@@ -146,6 +153,18 @@ function allConfigs() {
       });
     }
   }
+  // Direct variants WITHOUT TLS — for ports fronted by an HTTP-only proxy.
+  if (directPlainOn()) {
+    for (const k of kinds()) {
+      if (k.direct || k.protocol === 'Trojan' || k.protocol === 'Shadowsocks') continue; // pointless without TLS
+      out.push({
+        key: `${k.key}@plain`, protocol: k.protocol, transport: k.transport, path: k.path, engine: k.engine || 'native',
+        address: settings.publicIp, isClean: false, isDirect: true, isPlain: true,
+        label: `${k.protocol} ${k.transport} · مستقیم بدون TLS`,
+        link: k.build({ address: settings.publicIp, path: k.path, network: k.network, label: `${k.tag}-Plain`, direct: 'plain' }),
+      });
+    }
+  }
   for (const ip of state.cleanIps || []) {
     for (const k of kinds()) {
       if (k.direct) continue; // Reality goes straight to the VPS; clean IPs don't apply
@@ -168,6 +187,7 @@ function tagsOf(c) {
     c.transport === 'WebSocket' ? 'ws' : c.transport.toLowerCase(), // ws httpupgrade xhttp reality
     c.engine,                                                   // native xray
     c.isClean ? 'clean' : c.isDirect ? 'direct' : 'main',
+    c.isPlain ? 'plain' : null,
     c.transport === 'Reality' ? 'direct' : null,
   ].filter(Boolean));
 }
@@ -227,4 +247,4 @@ function subscriptionUrl(baseUrl) {
   return `${baseUrl}${settings.subPath}/${state.subToken}`;
 }
 
-module.exports = { allConfigs, subscriptionRaw, subscriptionBase64, clashYaml, subscriptionUrl, makeFilter, tlsOn, insecure, directOn };
+module.exports = { allConfigs, subscriptionRaw, subscriptionBase64, clashYaml, subscriptionUrl, makeFilter, tlsOn, insecure, directOn, directPlainOn };

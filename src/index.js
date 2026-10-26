@@ -490,7 +490,12 @@ async function onRequest(req, res) {
     const p = url.pathname;
 
     if (p === '/health' || p === '/healthz') {
-      return send(res, 200, JSON.stringify({ ok: true, uptime: Date.now() - startedAt, active: proxy.stats.active, xhttpSessions: xhttp.sessionCount() }), {
+      return send(res, 200, JSON.stringify({
+        ok: true, uptime: Date.now() - startedAt, active: proxy.stats.active, xhttpSessions: xhttp.sessionCount(),
+        // Diagnostics: who the server thinks is calling, and over what.
+        you: req.socket.remoteAddress, xff: req.headers['x-forwarded-for'] || null,
+        proto: req.socket.encrypted ? 'https' : 'http', host: req.headers.host || null,
+      }), {
         'Content-Type': 'application/json',
       });
     }
