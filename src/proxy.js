@@ -170,6 +170,62 @@ function dohRelayStream() {
   return d;
 }
 
+// ---- UDP relay (any destination) --------------------------------------------------------
+// VLESS/Trojan carry UDP as length-prefixed datagrams for ONE destination per
+// connection (the one in the header). Each such connection gets its own UDP socket.
+// This is what makes QUIC (Instagram, YouTube, Google), games and voice work.
+function udpRelayStream(host, port) {
+  const dgram = require('dgram');
+  const dns = require('dns');
+  const { Duplex } = require('stream');
+  let pending = Buffer.alloc(0);
+  let sock = null;
+  let addr = null;
+  let queue = [];
+  let idleTimer = null;
+  const d = new Duplex({
+    read() {},
+    write(chunk, enc, cb) {
+      pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+      while (pending.length >= 2) {
+        const len = pending.readUInt16BE(0);
+        if (pending.length < 2 + len) break;
+        const msg = Buffer.from(pending.subarray(2, 2 + len));
+        pending = pending.subarray(2 + len);
+        if (sock && addr) sock.send(msg, port, addr); else queue.push(msg);
+      }
+      cb();
+    },
+    final(cb) { cb(); },
+    destroy(err, cb) { clearTimeout(idleTimer); if (sock) try { sock.close(); } catch { /* ignore */ } cb(err); },
+  });
+  d.setNoDelay = () => {};
+  d.setTimeout = () => {};
+  const touch = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => d.destroy(), Math.min(settings.idleTimeout, 120000)); };
+  dns.lookup(host, (err, address, family) => {
+    if (err || !address) { d.destroy(new Error(`udp: resolve ${host} failed`)); return; }
+    if (isBlockedHost(address)) { d.destroy(new Error(`udp: blocked destination ${address}`)); return; }
+    addr = address;
+    sock = dgram.createSocket(family === 6 ? 'udp6' : 'udp4');
+    sock.on('message', (msg) => {
+      touch();
+      stats.bytesOut += msg.length;
+      const out = Buffer.alloc(2 + msg.length);
+      out.writeUInt16BE(msg.length, 0);
+      msg.copy(out, 2);
+      if (!d.destroyed) d.push(out);
+    });
+    sock.on('error', (e) => d.destroy(e));
+    sock.bind(() => {
+      for (const m of queue) sock.send(m, port, addr);
+      queue = [];
+      touch();
+      d.emit('connect');
+    });
+  });
+  return d;
+}
+
 // ---- relay ----------------------------------------------------------------------------
 function relay(stream, req, log) {
   let target;
@@ -177,8 +233,10 @@ function relay(stream, req, log) {
     if (isBlockedHost(req.host)) throw new Error(`blocked destination ${req.host}`);
     target = net.connect({ host: req.host, port: req.port });
   } else if (req.cmd === CMD_UDP) {
-    if (req.port !== 53) throw new Error('udp: only DNS (port 53) is supported');
-    target = settings.dohUrl ? dohRelayStream() : net.connect({ host: DNS_RESOLVER, port: settings.dnsResolverPort });
+    if (req.port === 53 && settings.dohUrl) target = dohRelayStream();
+    else if (req.port === 53) target = net.connect({ host: DNS_RESOLVER, port: settings.dnsResolverPort });
+    else if (settings.udpRelay) target = udpRelayStream(req.host, req.port);
+    else throw new Error('udp: relay disabled (UDP_RELAY=false)');
   } else {
     throw new Error(`unsupported command ${req.cmd}`);
   }
