@@ -1,0 +1,24 @@
+{
+  "tag": "france",
+  "protocol": "vless",
+  "settings": {
+    "vnext": [
+      {
+        "address": "YOUR-FRANCE-DOMAIN",
+        "port": 443,
+        "users": [
+          { "id": "bf7789c6-a217-4c23-9c4c-462bbfc9002f", "encryption": "none" }
+        ]
+      }
+    ]
+  },
+  "streamSettings": {
+    "network": "ws",
+    "security": "tls",
+    "tlsSettings": { "serverName": "YOUR-FRANCE-DOMAIN" },
+    "wsSettings": {
+      "path": "/ws",
+      "headers": { "Host": "YOUR-FRANCE-DOMAIN" }
+    }
+  }
+}
